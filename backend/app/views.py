@@ -1,0 +1,301 @@
+from sqlalchemy import select
+from .models import (
+    Person,
+    Upload,
+    Card,
+    Assignment,
+    Application,
+    ReviewHistory,
+    Visit,
+    Controller,
+    Door,
+    Confirmation,
+    Notification,
+    NotificationRead,
+    CalendarException,
+    Schedule,
+)
+from .common import iso, identity, name, get_setting, now
+from .security import capabilities
+
+
+def clean(data):
+    return {k: v for k, v in data.items() if v is not None}
+
+
+def person_view(db, p):
+    photo = db.scalar(
+        select(Upload)
+        .where(Upload.person_id == p.id, Upload.purpose == "PHOTO")
+        .order_by(Upload.created_at.desc())
+    )
+    return clean(
+        {
+            "id": p.id,
+            "type": p.kind,
+            "reference": p.reference,
+            "firstName": p.first_name,
+            "lastName": p.last_name,
+            "email": p.email,
+            "phone": p.phone,
+            "department": p.department,
+            "status": p.status,
+            "start": iso(p.start),
+            "expiry": iso(p.expiry),
+            "sync": p.sync,
+            "photo": f"/api/uploads/{photo.id}" if photo else None,
+            "accessEndedAt": iso(p.access_ended_at),
+            "deletedAt": iso(p.deleted_at),
+            "purgeAt": iso(p.purge_at),
+            "restored": p.restored,
+        }
+    )
+
+
+def card_view(c):
+    return clean(
+        {
+            "id": c.id,
+            "number": c.number,
+            "kind": c.kind,
+            "revoked": c.revoked,
+            "disabled": c.disabled,
+            "poolState": c.pool_state,
+            "privileged": c.privileged,
+        }
+    )
+
+
+def confirmation_view(c):
+    return clean(
+        {
+            "controllerId": c.controller_id,
+            "confirmed": c.state == "SYNCHRONIZED" and c.desired == c.last_confirmed,
+            "state": c.state,
+            "intendedState": c.desired,
+            "lastConfirmedState": c.last_confirmed,
+            "at": iso(c.confirmed_at),
+        }
+    )
+
+
+def assignment_view(db, a):
+    conf = list(
+        db.scalars(select(Confirmation).where(Confirmation.assignment_id == a.id))
+    )
+    return clean(
+        {
+            "id": a.id,
+            "personId": a.person_id,
+            "cardId": a.card_id,
+            "start": iso(a.start),
+            "expiry": iso(a.expiry),
+            "state": a.state,
+            "sync": a.sync,
+            "confirmations": [confirmation_view(c) for c in conf],
+            "reason": a.reason,
+            "returnedAt": iso(a.returned_at),
+        }
+    )
+
+
+def evidence_view(e):
+    return {
+        "name": e.name,
+        "type": e.content_type,
+        "size": e.size,
+        "url": f"/api/uploads/{e.id}",
+    }
+
+
+def app_view(db, a):
+    evidence = db.get(Upload, a.evidence_id) if a.evidence_id else None
+    card = db.get(Assignment, a.assignment_id) if a.assignment_id else None
+    history = db.scalars(
+        select(ReviewHistory)
+        .where(ReviewHistory.application_id == a.id)
+        .order_by(ReviewHistory.at, ReviewHistory.id)
+    )
+    return clean(
+        {
+            "id": a.id,
+            "personId": a.person_id,
+            "kind": a.kind,
+            "state": a.state,
+            "evidence": evidence_view(evidence) if evidence else None,
+            "history": [
+                clean(
+                    {
+                        "at": iso(h.at),
+                        "actor": name(db, h.actor_id),
+                        "action": h.action,
+                        "reason": h.reason,
+                    }
+                )
+                for h in history
+            ],
+            "reviewer": name(db, a.reviewer_id) if a.reviewer_id else None,
+            "reviewedAt": iso(a.reviewed_at),
+            "issuer": name(db, a.issuer_id) if a.issued_at else None,
+            "issuedAt": iso(a.issued_at),
+            "cardId": card.card_id if card else None,
+            "assignmentId": a.assignment_id,
+            "reason": a.reason,
+        }
+    )
+
+
+def visit_view(v):
+    return clean(
+        {
+            "id": v.id,
+            "personId": v.person_id,
+            "purpose": v.purpose,
+            "host": v.host,
+            "start": iso(v.start),
+            "expiry": iso(v.expiry),
+            "state": v.state,
+            "approval": v.approval,
+            "assignmentId": v.assignment_id,
+            "returned": v.returned,
+        }
+    )
+
+
+def event_view(e):
+    return clean(
+        {
+            "id": e.id,
+            "at": iso(e.at),
+            "receivedAt": iso(e.received_at),
+            "personId": e.person_id,
+            "person": e.person,
+            "reference": e.reference,
+            "card": e.card,
+            "assignmentId": e.assignment_id,
+            "controller": e.controller,
+            "door": e.door,
+            "readerId": e.reader_id,
+            "direction": e.direction,
+            "result": e.result,
+            "type": e.event_type,
+            "simulated": e.simulated,
+            "deletedAt": iso(e.deleted_at),
+            "purgeAt": iso(e.purge_at),
+            "restored": e.restored,
+        }
+    )
+
+
+def audit_view(a):
+    return clean(
+        {
+            "id": a.id,
+            "at": iso(a.at),
+            "actor": a.actor,
+            "action": a.action,
+            "target": a.target,
+            "result": a.result,
+            "personId": a.person_id,
+            "deletedAt": iso(a.deleted_at),
+            "purgeAt": iso(a.purge_at),
+            "restored": a.restored,
+        }
+    )
+
+
+def snapshot(db, actor, settings, at=None):
+    perms = capabilities(settings)
+    staff = actor.role != "USER"
+    people = list(
+        db.scalars(
+            select(Person).where(Person.purged == False, Person.deleted_at.is_(None))
+        )
+    )
+    assignments = list(db.scalars(select(Assignment)))
+    if not staff:
+        people = [p for p in people if p.id == actor.person_id]
+        assignments = [a for a in assignments if a.person_id == actor.person_id]
+    cards = list(db.scalars(select(Card)))
+    if not staff:
+        cards = [c for c in cards if any(a.card_id == c.id for a in assignments)]
+    applications = list(db.scalars(select(Application).order_by(Application.id)))
+    if actor.role not in perms["review"]:
+        applications = [a for a in applications if a.person_id == actor.person_id]
+    visits = list(db.scalars(select(Visit)))
+    if actor.role not in perms["visitors"]:
+        visits = [v for v in visits if v.person_id == actor.person_id]
+    devices = []
+    if actor.role in perms["dashboard"] or actor.role in perms["settings"]:
+        for d in db.scalars(select(Door)):
+            controller = db.get(Controller, d.controller_id)
+            devices.append(
+                clean(
+                    {
+                        "id": controller.id,
+                        "name": controller.name,
+                        "model": controller.model,
+                        "online": controller.online,
+                        "lastCommunication": iso(controller.last_communication),
+                        "doorId": d.id,
+                        "door": d.name,
+                        "sensor": d.sensor,
+                    }
+                )
+            )
+    notices = []
+    for n in db.scalars(select(Notification).order_by(Notification.at.desc())):
+        if not staff and n.person_id != actor.person_id:
+            continue
+        notices.append(
+            clean(
+                {
+                    "id": n.id,
+                    "at": iso(n.at),
+                    "severity": n.severity,
+                    "title": n.title,
+                    "detail": n.detail,
+                    "personId": n.person_id,
+                    "read": db.get(NotificationRead, (n.id, actor.id)) is not None,
+                }
+            )
+        )
+    schedule = db.get(Schedule, "normal")
+    payment = get_setting(db, "payment")
+    designated = db.scalar(select(Card).where(Card.privileged == True))
+    return {
+        "identity": identity(db, actor),
+        "people": [person_view(db, p) for p in people],
+        "cards": [card_view(c) for c in cards],
+        "assignments": [assignment_view(db, a) for a in assignments],
+        "applications": [app_view(db, a) for a in applications],
+        "visits": [visit_view(v) for v in visits],
+        "devices": devices,
+        "notifications": notices,
+        "schedule": {
+            **schedule.data,
+            "sync": schedule.sync,
+            "exceptions": [
+                e.data
+                for e in db.scalars(
+                    select(CalendarException).order_by(CalendarException.date)
+                )
+            ],
+        },
+        "settings": {
+            **payment,
+            **({"privilegedCardId": designated.id} if designated else {}),
+        },
+        "controls": get_setting(db, "simulation")
+        if actor.role == "SUPER_ADMIN"
+        else {
+            "offline": False,
+            "failDisable": False,
+            "delayActivation": False,
+            "unlockTimeout": False,
+        },
+        "clock": iso(at or now()),
+        "controllerMode": settings.controller_mode,
+        "simulationControlsEnabled": settings.simulation_controls_enabled
+        and actor.role == "SUPER_ADMIN",
+    }

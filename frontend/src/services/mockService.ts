@@ -1162,6 +1162,13 @@ export class MockService implements AccessControlService {
         n.read = true;
         break;
       }
+      case "pool-card": {
+        this.require("settings");
+        throw new ServiceError(
+          "VALIDATION_ERROR",
+          "New pool assets are configured in HTTP mode; mock mode uses its seeded pool.",
+        );
+      }
       case "demo-controls": {
         if (!this.demoEnabled)
           throw new ServiceError(

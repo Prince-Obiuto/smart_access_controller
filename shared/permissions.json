@@ -1,0 +1,13 @@
+{
+ "dashboard":["SUPER_ADMIN","ADMIN","MANAGER"],
+ "review":["SUPER_ADMIN","ADMIN","MANAGER"],
+ "people":["SUPER_ADMIN","ADMIN"],
+ "issue":["SUPER_ADMIN","ADMIN"],
+ "visitors":["SUPER_ADMIN","ADMIN"],
+ "unlock":["SUPER_ADMIN","ADMIN"],
+ "schedules":["SUPER_ADMIN","ADMIN"],
+ "logs":["SUPER_ADMIN","ADMIN","MANAGER","MANAGEMENT"],
+ "export":["SUPER_ADMIN","ADMIN","MANAGEMENT"],
+ "settings":["SUPER_ADMIN"],
+ "recovery":["SUPER_ADMIN"]
+}

@@ -87,6 +87,13 @@ export function CardsActivity() {
                           {a.confirmations.map((x) => (
                             <p key={x.controllerId}>
                               {x.controllerId} · intended {x.intendedState}
+                              {x.lastConfirmedState && (
+                                <>
+                                  <br />
+                                  Last simulated confirmation:{" "}
+                                  {x.lastConfirmedState}
+                                </>
+                              )}
                               <br />
                               <Badge value={x.state} /> ·{" "}
                               {x.confirmed ? "Confirmed" : "Not confirmed"}

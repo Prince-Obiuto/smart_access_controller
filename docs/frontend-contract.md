@@ -1,69 +1,51 @@
-# Frontend service contract (provisional)
+# Typed service and HTTP contract
 
-Components consume one asynchronous `AccessControlService`, independent of fixtures, storage and transport. All identifiers are strings; timestamps are ISO 8601; displayed operational time is Africa/Lagos. Lists returned by `records` use `{items,total,page,pageSize}`; `snapshot` is a small, role-scoped workspace aggregate rather than an unbounded production listing. Production family listings should adopt the same pagination envelope.
+Components consume `frontend/src/services/accessControlService.ts`. The HTTP adapter implements this interface with same-origin requests; mock mode remains available explicitly. Identifiers and physical card numbers are strings, preserving leading zeros. API timestamps are timezone-aware UTC ISO values; date-only validity inputs mean midnight in Africa/Lagos, and the UI displays Africa/Lagos operational times.
 
-## Authorization
+## Permissions and sessions
 
-Central source: `frontend/src/permissions.ts`. Apply it to navigation, guards, controls and service operations. The future server must independently enforce role and ownership on every read and write; browser restrictions provide no secure production boundary.
+`shared/permissions.json` is the single capability matrix, imported by the frontend and read by backend services. Database role capability rows mirror it at startup. Roles are SUPER_ADMIN, ADMIN, MANAGER, MANAGEMENT and USER. Admin/Super Admin issue cards, edit ordinary people/dates, manage visitors/schedules and unlock. Manager can review evidence and read dashboard/logs, with issuance, people edits, exports and unlock denied. Management reads and exports logs. Super Admin alone manages roles, controller naming, privileged designation, pool configuration and recovery. USER reads only its own workspace and updates phone/photo, applies for a personal card, reports its own missing card, or requests a visit. Visitors have no payment workflow.
 
-| Capability                                          | SUPER_ADMIN | ADMIN   | MANAGER | MANAGEMENT | USER                 |
-| --------------------------------------------------- | ----------- | ------- | ------- | ---------- | -------------------- |
-| Dashboard                                           | operate     | operate | view    | no         | no                   |
-| Payment review                                      | yes         | yes     | yes     | no         | own status           |
-| Ordinary person edits / validity                    | yes         | yes     | no      | no         | own phone/photo only |
-| Card issuance / administrative revocation           | yes         | yes     | no      | no         | own missing report   |
-| Visitor approval confirmation / issuance / checkout | yes         | yes     | no      | no         | own request          |
-| Remote timed unlock                                 | yes         | yes     | no      | no         | no                   |
-| Schedules / exceptions                              | yes         | yes     | no      | no         | no                   |
-| Access and audit logs                               | yes         | yes     | yes     | yes        | no                   |
-| Filtered exports                                    | yes         | yes     | no      | yes        | no                   |
-| Controllers, roles, payment, privileged designation | yes         | no      | no      | no         | no                   |
-| Soft-delete recovery                                | yes         | no      | no      | no         | no                   |
+Opaque, rotated session IDs use HttpOnly SameSite=Lax cookies scoped to `/api`. Only their SHA-256 digests are stored; passwords use Argon2id. The adapter retrieves a CSRF token from `/auth/csrf` and sends `X-CSRF-Token` on writes. Browser origins are checked. No password, session token or authoritative identity is stored in localStorage. `selectDemo` is forbidden and `demoIdentities` is empty in HTTP mode. Development HTTP cookies require an explicit configuration switch; Secure cookies are the default.
 
-Every role may manage its own phone/photo and report its own card missing. Person type STUDENT/STAFF/VISITOR is independent of role. Registration always creates USER; visitors cannot upload payment evidence. Privileged-account identity edits require SUPER_ADMIN in the mock.
+## Implemented endpoints
 
-## Models and state invariants
+All paths below begin with `/api`.
 
-`src/models.ts` defines Identity, Person, Card, Assignment, Application, Evidence, Visit, Device, Schedule, AccessEvent, Audit, Notice, Confirmation and OperationResult. Person status ACTIVE/DISABLED does not imply physical access. Admin supplies start and exclusive expiry explicitly; expiry must follow start. Institutional email domain must equal futo.edu.ng after trimming and case normalization, without subdomains or lookalikes. Domain validation does not verify ownership.
+| Service method/workflow | HTTP endpoint |
+|---|---|
+| health | `GET /health` |
+| currentIdentity / CSRF | `GET /auth/me`, `GET /auth/csrf` |
+| login / logout | `POST /auth/login`, `POST /auth/logout` |
+| register | `POST /auth/register`, multipart JSON `payload` and optional `photo` |
+| snapshot | `GET /workspace`, role/ownership-scoped aggregate |
+| execute most commands | `POST /commands`, Pydantic discriminated `type` union matching frontend commands |
+| profile | `POST /me/profile`, multipart `phone`, optional `photo` |
+| submit evidence | `POST /applications/{id}/evidence`, multipart `file` |
+| protected file download | `GET /uploads/{id}` |
+| records | `GET /records/events` or `/records/audits`, filter query parameters |
+| exportRecords | `POST /exports/{family}/{csv\|pdf}`, JSON filters |
+| recovery / restore | `GET /recovery`, `restore` command |
+| scanning | `POST /enrolment-sessions`, `GET /enrolment-sessions/{id}`, `POST /enrolment-sessions/{id}/{confirm\|cancel}` |
 
-Applications: DRAFT → SUBMITTED → APPROVED → ISSUANCE_PENDING → ISSUED. Rejection: SUBMITTED → REJECTED → SUBMITTED, retaining dated reviewer/reason history. Evidence upload does not approve; review and confirmed issuance have separate actors/timestamps. Duplicate open submissions and issuance are blocked. The demo accepts JPEG/PNG/PDF up to configurable 5 MiB; preview bytes live only in temporary object URLs. Server implementation must validate content/signatures, reject unsafe files, enforce limits, use safe storage and serve authenticated downloads. Browser MIME checks are not sufficient.
+The provisional separate mutation routes were deliberately consolidated into `/commands`, matching the existing typed frontend command boundary. Profile/evidence remain multipart routes. Enrolment is explicitly simulated; detection is generated by a CSRF-protected start command, read polling never enrols or activates a physical credential. Sessions expire after 30 seconds, are actor-owned, and support cancellation/confirmation.
 
-Assignments: PENDING, ACTIVE, REVOKED, EXPIRED, CLOSED. Sync: PENDING, SYNCHRONIZED, FAILED, OUT_OF_SYNC. Every operation tracks confirmations for all target controllers separately. Model arrays support additional doors/controllers; the UI starts with one DS-K2802 and one door with Entry and Exit readers. There is at most one current ACTIVE/PENDING assignment per actual person and physical card. Event records retain their event-time assignment ID and synthetic owner/reference snapshots, never resolving their historical owner from current card ownership.
+Commands and evidence submission require `Idempotency-Key`; a repeated key for the same account/payload returns the recorded result, while a changed payload conflicts. Command intents and outbox rows commit before adapter execution. Responses include intended state, per-controller confirmations, operation IDs when applicable, result and message. Each confirmation exposes last confirmed state separately from desired state. `CONFIRMED` applies only to the simulated adapter, never physical hardware. `FAILED`, `PENDING` and `UNCERTAIN` remain explicit. The adapter does not automatically retry lost write responses; the operation may already have committed. Upload/profile/login HTTP errors are structured, including FORBIDDEN, VALIDATION_ERROR, CONFLICT, UNAUTHENTICATED and NOT_CONNECTED.
 
-A card number is a string retaining leading zeros. Manual entry and explicit 30-second enrolment scan sessions support detected, cancelled, expired and confirmed states. Ordinary access swipes never create a card asset. Revoked personal assets cannot be reused. MISSING includes lost and suspected stolen. Replacement revokes locally, attempts old disable everywhere, blocks new activation until confirmed, then attempts new activation. Failed disable is CRITICAL. Own missing reports execute immediately without payment or approval. Access-date edits remain pending until a simulated update is confirmed.
+`subscribe` polls the scoped workspace every four seconds while visible. Its changing clock triggers filtered record refreshes. Stored events/notifications update without manual reload. The backend collects simulated events with stable source IDs and a deduplicated overlap every two minutes. No real live transport is connected.
 
-Visitor pool: AVAILABLE_DISABLED → ASSIGNMENT_PENDING → ASSIGNED → RETURN_PENDING_DISABLE → AVAILABLE_DISABLED. Failed removal leaves RETURN_PENDING_DISABLE; missing/damaged cards stay unavailable. Expired unreturned cards are QUARANTINED. Approval is external; Admin records a confirmation reference before assignment. Visitors have individually generated IDs and fee-free requests. Once a temporary account has ended, it cannot submit a new visit to bypass its original retention deadline, even after restoration. Physical return must be recorded; an Exit swipe does not checkout. Expiry ends access even without return. Failed controller removal cannot make a card available.
+## Durable workflow rules
 
-Normal schedule includes weekdays, working hours and calendar exceptions. Saved changes remain PENDING until simulated controller update succeeds. One separately designated Super Admin personal card has unrestricted 24/7 access including holidays; role elevation does not create one. Privileged schedule designation requires confirmed simulated controller synchronization; failure leaves it unapplied. Revocation can leave no usable designation; replacing it must confirm disable of the previous card before designation/activation.
+The schema separates persons/accounts, assets/assignments, intended access/confirmed controller state and current/historical assignments. PostgreSQL partial unique indexes enforce one PENDING/ACTIVE assignment per person and card, one open application/visit and at most one privileged asset. Domain mutations also use a PostgreSQL transaction advisory lock. Historical assignments and operation rows survive revocation and supersession. Outbox commands carry versioned validity/schedule data; stale versions cannot apply after a new edit.
 
-Timed unlock is five seconds, with explicit confirmation naming the door. Result includes intended state, per-controller confirmation, result CONFIRMED/PENDING/FAILED/UNCERTAIN and a message. Acknowledgement is not sensor proof: sensor remains UNKNOWN. Timeouts are uncertain and never retried automatically. Notification severities INFO/WARNING/CRITICAL include simulated unknown/revoked credentials, disconnect/reconnect, synchronization failures, forced/held opening and reader faults. Actual hardware support is unverified.
+Approval and issuance remain separate, with reviewer/issuer history. Missing-card reports commit revocation promptly and dispatch removal independently of collection/payment jobs. Replacements wait for every controller to confirm old removal. Visitors require recorded external approval, a usable disabled pool asset, approved validity, physical return for successful checkout and confirmed removal before reuse. Expired/unreturned, missing and damaged assets stay unavailable. Exit swipes never check out a visitor. Event records copy the historical owner and assignment ID; delayed events resolve by event time and assignment creation/end times, independent of later asset reuse.
 
-## Proposed HTTP mapping
+Normal schedule changes are saved PENDING, then explicitly synchronized. Unrestricted access requires an active, synchronized Super Admin-owned personal asset and explicit designation. Switching designation first removes every previously privileged credential. Website role assignment never grants this schedule. Role demotion of a designated owner revokes the assignment. Timed unlock requires Admin/Super Admin and explicit confirmation, releases for five seconds in simulation, records audit/notification and leaves the sensor UNKNOWN. A durable UNCERTAIN marker is written before sending, preventing replay after a crash.
 
-No endpoint below is implemented or final. No Hikvision endpoints are invented. `execute(Command)` is the typed frontend mutation boundary; the HTTP adapter should translate each union variant into a dedicated application endpoint.
+## Files, records and retention
 
-| Service operation / command family                     | Proposed FastAPI mapping                                                                                               |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| currentIdentity, login, logout, register               | GET /auth/me; POST /auth/login, /auth/logout, /auth/register, /auth/register/visitor                                   |
-| snapshot                                               | GET /workspace (server-scoped aggregate)                                                                               |
-| profile, person, dates                                 | PATCH /me/profile; POST/PATCH /people/{id}; PATCH /people/{id}/validity                                                |
-| application, submit, review, issue                     | POST /applications; POST /applications/{id}/evidence; POST /applications/{id}/review; POST /applications/{id}/issuance |
-| snapshot card/assignment families                      | GET /cards, /cards/{id}/assignments (paginated in production)                                                          |
-| scan methods                                           | POST /enrolment-sessions; GET /enrolment-sessions/{id}; POST /{id}/confirm, /{id}/cancel                               |
-| revoke, retry-sync                                     | POST /assignments/{id}/revoke; POST /sync-operations/{id}/retry                                                        |
-| visit, visitor-approve, visitor-assign, visitor-return | POST /visits; POST /visits/{id}/approval-confirmation, /assignment, /checkout                                          |
-| schedule / schedule synchronization                    | PUT /schedules/normal; POST /schedules/normal/synchronize                                                              |
-| unlock / device health                                 | POST /doors/{id}/timed-unlock; GET /controllers/health                                                                 |
-| records                                                | GET /access-events, /audit-records with filters and pagination                                                         |
-| exportRecords                                          | POST /exports/access-events, /exports/audit-records (authenticated CSV/PDF)                                            |
-| recovery / restore                                     | GET /recovery/{family}; POST /recovery/{family}/{id}/restore                                                           |
-| settings, role, designate, device                      | PATCH /settings; PATCH /accounts/{id}/role; PUT /privileged-card; PATCH /controllers/{id}                              |
-| notifications / notice-read                            | GET /notifications; PATCH /notifications/{id}/read                                                                     |
+Server upload validation parses JPEG/PNG or passive PDF structure, rejects malformed/active/encrypted PDFs and excessive image dimensions, and canonicalizes photos. Browser MIME/filename are not trusted. Private generated storage keys, authenticated ownership/reviewer/people checks, nosniff, content-disposition and restrictive content policy protect retrieval. No malware scanner is configured or claimed. Uploaded files survive restarts and are included in backups.
 
-Errors use ServiceError with code, message and optional field: FORBIDDEN, VALIDATION_ERROR, CONFLICT, CONTROLLER_UNAVAILABLE, UNAUTHENTICATED, NOT_CONNECTED. Offline simulated operations return FAILED results carrying per-controller confirmations, so local revocation remains observable. The server should add operation IDs/idempotency keys, transactional uniqueness, device-specific target sets, CSRF/session handling and safe concurrency. HTTP scaffold always rejects as NOT_CONNECTED; it does not fabricate successful responses.
+Records use `{items,total,page,pageSize}`. Filters and authorized CSV/PDF exports operate over the same query; exports include all matches beyond the current page, escape formula prefixes in CSV and create an audit record. Secrets are not included in audit data. Workspace aggregates are intended for this small installation; large deployments would need additional pagination.
 
-## Logs, export and retention
-
-Access filters: from/through date, person, reference, card, controller, door, reader direction, granted/denied, event type. Audit filters: date range, actor, action, target, result. CSV and bundled PDF use all matching permitted rows independent of displayed pagination and record export in audit history. CSV fields beginning with spreadsheet-formula prefixes are escaped, including whitespace-prefixed formulas. Mock audit history is mutable demonstration data, never tamper-proof storage. Secrets are not written into audit fields.
-
-Access events: soft delete after 90 days, purge after 120 days. Audit: six calendar months (month-end clamped), then 30 days to purge. Visitor details: soft delete 15 days after access ends, purge 45 days after access ends. A restored marker keeps the record visible until its original purge deadline; restoration never restarts retention, revives an assignment or extends validity. Visitor PII copied into event/audit fields is anonymized at the earlier visitor purge deadline, retaining opaque historical references. The demo clock advances these rules in memory. Backend jobs must enforce them durably, including object storage deletion and backups. One-year backup retention is unconnected deployment work.
+Retention runs at startup and in the backend worker, with an explicit service-clock argument for tests: access 90+30 days; audit six calendar months+30 days; visitor personal information 15+30 days from access end. Recovery is Super Admin-only and retains the original purge deadline. Restored records stay visible until that deadline without reactivating access. Visitor purging removes uploads/accounts/sessions and copied identifying fields in events, raw payloads, notices, audits and visit details, preserving opaque historical IDs. Backups retain their original private data until the separate one-year backup policy expires; restore reapplies current expired-record rules before exposing data.

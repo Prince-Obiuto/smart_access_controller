@@ -121,7 +121,11 @@ export function MyAccess() {
               </Panel>
               <Panel title="Payment instructions">
                 <div className="padded">
-                  <span className="eyebrow">FICTIONAL EXAMPLE SETTINGS</span>
+                  <span className="eyebrow">
+                    {service.mode === "mock"
+                      ? "FICTIONAL EXAMPLE SETTINGS"
+                      : "CONFIGURED BY THE LOCAL ADMINISTRATOR"}
+                  </span>
                   <p>{data.settings.payment}</p>
                   <small>
                     Evidence: JPEG, PNG or PDF · up to{" "}
@@ -280,7 +284,7 @@ export function Profile() {
                   type: "file",
                   required: false,
                   accept: "image/jpeg,image/png",
-                  hint: "Temporary demo preview only; no photo bytes saved in browser storage.",
+                  hint: "Uploaded through your selected service; HTTP mode stores the photo on the protected local backend.",
                 },
               ]}
               onSubmit={(d) => {
@@ -585,7 +589,7 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
           >
             Simulate scan card
           </Action>
-          <button className="primary" type="submit">
+          <button className="primary" type="submit" disabled={!number.trim()}>
             Confirm enrolment & activate
           </button>
         </div>

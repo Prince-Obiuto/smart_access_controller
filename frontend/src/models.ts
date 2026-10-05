@@ -48,6 +48,7 @@ export interface Confirmation {
   confirmed: boolean;
   state: SyncState;
   intendedState: "ENABLED" | "DISABLED" | "UPDATED";
+  lastConfirmedState?: string;
   at?: string;
 }
 export interface Assignment {
@@ -112,7 +113,7 @@ export interface Device {
   name: string;
   model: string;
   online: boolean;
-  lastCommunication: string;
+  lastCommunication?: string;
   doorId: string;
   door: string;
   sensor: "OPEN" | "CLOSED" | "UNKNOWN";
@@ -181,6 +182,8 @@ export interface DemoControls {
   unlockTimeout: boolean;
 }
 export interface Snapshot {
+  controllerMode?: "SIMULATED";
+  simulationControlsEnabled?: boolean;
   identity: Identity;
   people: Person[];
   cards: Card[];
@@ -241,6 +244,7 @@ export interface ScanSession {
   number?: string;
 }
 export type Command =
+  | { type: "pool-card"; number: string }
   | { type: "profile"; phone: string; photo?: File }
   | { type: "person"; id?: string; data: Omit<Person, "id" | "sync"> }
   | { type: "dates"; personId: string; start: string; expiry: string }

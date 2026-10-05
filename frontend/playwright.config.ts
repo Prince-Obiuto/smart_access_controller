@@ -3,10 +3,10 @@ export default defineConfig({
   testDir: "./tests/browser",
   timeout: 30000,
   workers: 1,
-  use: { baseURL: "http://127.0.0.1:5173", trace: "retain-on-failure" },
+  use: { baseURL: "http://127.0.0.1:5176", trace: "retain-on-failure" },
   webServer: {
-    command: "npm run dev -- --port 5173",
-    url: "http://127.0.0.1:5173",
+    command: "VITE_SERVICE_MODE=mock npm run dev -- --port 5176",
+    url: "http://127.0.0.1:5176",
     reuseExistingServer: true,
   },
   projects: [

@@ -93,6 +93,14 @@ function Application() {
     try {
       const s = await service.snapshot();
       setData(s);
+      setIdentity((previous) =>
+        previous &&
+        (previous.role !== s.identity.role ||
+          previous.name !== s.identity.name ||
+          previous.email !== s.identity.email)
+          ? s.identity
+          : previous,
+      );
       setError("");
     } catch (e) {
       setError((e as Error).message);
@@ -151,7 +159,7 @@ function Application() {
       <Icon name="warning" size={15} />
       {service.mode === "mock"
         ? "Demo mode — hardware actions are simulated."
-        : "HTTP mode — backend adapter not connected."}
+        : "Controller integration is simulated."}
     </div>
   );
   if (initial)
@@ -225,7 +233,12 @@ function Application() {
         <div className="network-note">
           <span className="status-dot" />
           <div>
-            Campus local network<small>Offline-capable demo</small>
+            Campus local network
+            <small>
+              {service.mode === "mock"
+                ? "Offline-capable demo"
+                : "Local server session"}
+            </small>
           </div>
         </div>
         <button

@@ -1,0 +1,49 @@
+name: ift-access
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Configure .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ift_access}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ift_access}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ALLOW_INSECURE_DEV_COOKIES: ${ALLOW_INSECURE_DEV_COOKIES:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      UPLOAD_DIR: /data/uploads
+      CONTROLLER_MODE: SIMULATED
+      SIMULATION_CONTROLS_ENABLED: ${SIMULATION_CONTROLS_ENABLED:-false}
+      UPLOAD_LIMIT: ${UPLOAD_LIMIT:-5242880}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      JOBS_ENABLED: ${JOBS_ENABLED:-true}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  database:
+  uploads:

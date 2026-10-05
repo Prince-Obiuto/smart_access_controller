@@ -247,13 +247,36 @@ function Settings() {
   const { data, act } = useApp();
   return (
     <div className="record-grid">
+      {service.mode === "http" && (
+        <Panel title="Visitor card pool">
+          <div className="padded">
+            <p>
+              Add a reusable physical card asset. It becomes available only
+              after simulated disable confirmation.
+            </p>
+            <FormFields
+              fields={[{ name: "number", label: "Visitor pool card number" }]}
+              submit="Add pool card"
+              onSubmit={(d) =>
+                act({ type: "pool-card", number: text(d, "number") })
+              }
+            />
+          </div>
+        </Panel>
+      )}
+      {service.mode === "http" && data.simulationControlsEnabled && (
+        <BackendSimulation />
+      )}
       <Panel title="Payment and uploads">
         <div className="padded">
           <FormFields
             fields={[
               {
                 name: "payment",
-                label: "Fictional demo payment instructions",
+                label:
+                  service.mode === "mock"
+                    ? "Fictional demo payment instructions"
+                    : "Payment instructions",
                 type: "textarea",
                 value: data.settings.payment,
               },
@@ -353,11 +376,11 @@ function Settings() {
       </Panel>
       <Panel title="Backend backups">
         <div className="padded">
-          <Badge value="NOT_CONNECTED" />
           <p>
-            No backup system is connected. One-year backup retention belongs to
-            backend deployment; this frontend does not create or restore
-            backups.
+            Backups are local operator tasks; no backup history is claimed by
+            this screen. See the README backup/restore scripts. One-year backup
+            retention belongs to backend deployment; this frontend does not
+            create or restore backups.
           </p>
         </div>
       </Panel>
@@ -551,5 +574,73 @@ export function DemoTools() {
         </Action>
       </div>
     </details>
+  );
+}
+
+function BackendSimulation() {
+  const { data, act } = useApp();
+  const [controls, setControls] = useState(data.controls);
+  useEffect(() => setControls(data.controls), [data.controls]);
+  return (
+    <Panel title="Simulated controller failures">
+      <div className="padded">
+        <p>
+          Controller integration is simulated. These controls require server
+          Super Admin authorization and explicit configuration.
+        </p>
+        <div className="demo-switches">
+          {(
+            [
+              "offline",
+              "failDisable",
+              "delayActivation",
+              "unlockTimeout",
+            ] as const
+          ).map((key) => (
+            <label key={key}>
+              <input
+                type="checkbox"
+                checked={controls[key]}
+                onChange={(e) => {
+                  const updated = { ...controls, [key]: e.target.checked };
+                  setControls(updated);
+                  void act({ type: "demo-controls", controls: updated }).catch(
+                    () => setControls(data.controls),
+                  );
+                }}
+              />
+              {
+                {
+                  offline: "Controller offline",
+                  failDisable: "Fail credential disable",
+                  delayActivation: "Delay activation / updates",
+                  unlockTimeout: "Unlock timeout",
+                }[key]
+              }
+            </label>
+          ))}
+        </div>
+        <div className="button-row">
+          {(
+            [
+              "ENTRY",
+              "EXIT",
+              "UNKNOWN",
+              "REVOKED",
+              "FORCED_OPEN",
+              "HELD_OPEN",
+              "READER_FAULT",
+            ] as const
+          ).map((event) => (
+            <Action
+              key={event}
+              onClick={() => act({ type: "demo-event", event })}
+            >
+              Simulate {event.toLowerCase().replaceAll("_", " ")}
+            </Action>
+          ))}
+        </div>
+      </div>
+    </Panel>
   );
 }

@@ -72,7 +72,10 @@ export function Auth({
           name: "password",
           label: "Password",
           type: "password",
-          hint: "At least eight characters; held in memory in this demo.",
+          hint:
+            service.mode === "mock"
+              ? "At least eight characters; held in memory in this demo."
+              : "At least 12 characters; securely hashed by the local server.",
         },
       ]
     : [
@@ -202,8 +205,9 @@ export function Auth({
           )}
           {service.mode === "http" && (
             <div className="callout warning">
-              HTTP adapter not connected. The future backend must implement the
-              documented contract.
+              Connection uses the local backend and server-side sessions.
+              Controller operations remain simulated. See the documented
+              contract.
             </div>
           )}
           {error && (

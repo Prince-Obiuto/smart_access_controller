@@ -5,3 +5,11 @@ dist/
 test-results/
 playwright-report/
 *.log
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+backend/var/
+.env.*.local
+*.pyc
+coverage/
