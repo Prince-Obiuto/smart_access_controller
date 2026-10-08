@@ -1,0 +1,18 @@
+# Local-only SDK/bridge mounts; vendor binaries never enter the application image.
+services:
+  backend:
+    environment:
+      HIKVISION_BRIDGE_PATH: /opt/hikvision-bin/ift-hikvision
+    volumes:
+      - type: bind
+        source: ${HIKVISION_SDK_DIR:?Configure the extracted official SDK path}
+        target: /opt/hikvision-sdk
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./backend/var/hikvision-container
+        target: /opt/hikvision-bin
+        read_only: true
+        bind:
+          create_host_path: false

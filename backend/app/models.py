@@ -283,7 +283,7 @@ class Operation(Row, Base):
 class AccessEvent(Row, Retained, Base):
     __tablename__ = "access_events"
     source_key: Mapped[str] = mapped_column(String(150), unique=True)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     person_id: Mapped[str | None] = mapped_column(ForeignKey("persons.id"), index=True)
     assignment_id: Mapped[str | None] = mapped_column(ForeignKey("assignments.id"))
@@ -291,8 +291,8 @@ class AccessEvent(Row, Retained, Base):
     reference: Mapped[str] = mapped_column(String(100))
     card: Mapped[str] = mapped_column(String(32))
     controller: Mapped[str] = mapped_column(ForeignKey("controllers.id"))
-    door: Mapped[str] = mapped_column(ForeignKey("doors.id"))
-    reader_id: Mapped[str] = mapped_column(ForeignKey("readers.id"))
+    door: Mapped[str | None] = mapped_column(ForeignKey("doors.id"))
+    reader_id: Mapped[str | None] = mapped_column(ForeignKey("readers.id"))
     direction: Mapped[str] = mapped_column(String(8))
     result: Mapped[str] = mapped_column(String(8))
     event_type: Mapped[str] = mapped_column(String(40))

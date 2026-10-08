@@ -614,6 +614,10 @@ class AccessService:
             self.message = "Schedule saved — application to controllers is pending."
         elif t == "unlock":
             self.need("unlock")
+            if not self.settings.controller_writes_available:
+                raise DomainError(
+                    "NOT_CONNECTED", "Door commands unavailable in read-only mode.", 409
+                )
             d = self.get(Door, c["doorId"])
             if c["confirmed"] is not True:
                 raise DomainError("VALIDATION_ERROR", "Confirm the named door.")
@@ -789,7 +793,10 @@ class AccessService:
 
     def simulation(self):
         self.need("settings")
-        if not self.settings.simulation_controls_enabled:
+        if (
+            not self.settings.controller_writes_available
+            or not self.settings.simulation_controls_enabled
+        ):
             raise DomainError(
                 "FORBIDDEN", "Simulation controls are explicitly disabled.", 403
             )

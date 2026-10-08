@@ -1402,9 +1402,10 @@ export class MockService implements AccessControlService {
       (p) => !p.purgeAt || now < Date.parse(p.purgeAt),
     );
     for (const e of this.state.events) {
-      e.purgeAt ??= plus(e.at, 120);
-      if (!e.restored && now >= Date.parse(plus(e.at, 90)))
-        e.deletedAt ??= plus(e.at, 90);
+      const original = e.at ?? e.receivedAt ?? this.clock;
+      e.purgeAt ??= plus(original, 120);
+      if (!e.restored && now >= Date.parse(plus(original, 90)))
+        e.deletedAt ??= plus(original, 90);
     }
     this.state.events = this.state.events.filter(
       (e) => now < Date.parse(e.purgeAt!),
@@ -1425,6 +1426,7 @@ export class MockService implements AccessControlService {
         Object.entries(f).every(([key, value]) => {
           if (!value || ["page", "pageSize"].includes(key)) return true;
           if (key === "from" || key === "to") {
+            if (!row.at) return false;
             const boundary = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
               ? String(value) + "T00:00:00+01:00"
               : String(value);

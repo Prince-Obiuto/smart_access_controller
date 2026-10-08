@@ -120,18 +120,23 @@ export interface Device {
 }
 export interface AccessEvent {
   id: string;
-  at: string;
+  at?: string;
+  receivedAt?: string;
   personId?: string;
   person: string;
   reference: string;
   card: string;
   assignmentId?: string;
   controller: string;
-  door: string;
-  direction: "ENTRY" | "EXIT";
-  result: "GRANTED" | "DENIED";
+  door?: string;
+  direction: "ENTRY" | "EXIT" | "UNKNOWN";
+  result: "GRANTED" | "DENIED" | "UNKNOWN";
   type: string;
-  simulated: true;
+  simulated: boolean;
+  deviceReader?: string;
+  deviceDoor?: string;
+  timestampFlags?: string[];
+  readerMappingVerified?: boolean;
   deletedAt?: string;
   purgeAt?: string;
   restored?: boolean;
@@ -182,7 +187,14 @@ export interface DemoControls {
   unlockTimeout: boolean;
 }
 export interface Snapshot {
-  controllerMode?: "SIMULATED";
+  controllerMode?: "SIMULATED" | "HIKVISION_READ_ONLY";
+  controllerWritesAvailable?: boolean;
+  controllerReadStatus?:
+    "SIMULATED" | "BLOCKED" | "CONNECTED" | "CONNECTING" | "FAILED";
+  controllerReadMessage?: string;
+  controllerHistoryStatus?: string;
+  controllerLiveStatus?: string;
+  controllerReaderMappingVerified?: boolean;
   simulationControlsEnabled?: boolean;
   identity: Identity;
   people: Person[];

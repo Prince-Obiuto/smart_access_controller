@@ -1,5 +1,13 @@
 # Implementation and verification notes
 
+## Native read-only integration, 8 October 2026
+
+The local official Linux x86_64 HCNetSDK 6.1.9.4 now drives a compiled read-only bridge, isolated from FastAPI's event loop. Matching vendor headers define every ABI type/callback. Host and actual Debian backend-container TCP/login/device/history/real-time subscription checks succeeded after the owner restored direct Ethernet. Device response matches DS-K2802 / V2.0.8 build 250625. The owner confirmed ordinary swipes establishing Reader 1 EXIT and Reader 2 ENTRY on Door 1, correcting the initial expected mapping. Real events reached PostgreSQL, actual API projections and phone/laptop rendering; see [full capability evidence and remaining acceptance](hikvision-capabilities.md).
+
+Existing private setup, diagnostic CLI, read-only outbox safeguards and pending operations were preserved. SDK binaries/headers and generated bridges stay ignored and locally mounted read-only, outside the image. Native callbacks are bounded, history/checkpoints commit atomically, live/history deduplicate, and incomplete batches never move watermarks. Unknown fields/outcomes/times stay explicit; historical assignment resolution does not infer names from owner chat. Login and reads cannot mark permissions synchronized. No physical writes, reset, upgrade, commit, push or deployment occurred.
+
+Verification includes isolated backend/native-process/event tests, frontend unit/type/build checks, six mock browser workflows, two connected browser workflows and two read-only phone/laptop workflows. Additional private local checks rendered actual API responses using a rolled-back test authentication session and read-only browser snapshot harness, and compared a captured live identity with actual history without inserting a duplicate. This does not assert an ordinary operator login into a continuously running installation. Exact totals/results are in the capability report. Earlier timeout/missing-SDK evidence was superseded during this continuation; the initial simulated-delivery notes below remain historical context for workflows and write limitations.
+
 ## Current implementation
 
 The existing React screens were preserved and connected through their typed service boundary. HTTP is the default; explicit mock mode remains memory-only. FastAPI/PostgreSQL stores accounts/sessions, people, applications/reviews/uploads, card assets/historical assignments, visitors/pool, controllers/doors/readers, normal schedules/exceptions, events, audits, notifications, confirmations/settings and a durable operation outbox. PostgreSQL migrations create the schema and use bigint outbox versions. Local domain mutations use a transaction advisory lock plus partial unique constraints for concurrency protection.
@@ -51,7 +59,7 @@ Verification found and corrected stale queued date/schedule operations, visitor 
 
 ## Limits and required real DS-K2802 work
 
-**Controller integration is simulated.** No physical controller was connected, reactivated, queried or commanded. Simulated confirmation, communication timestamps, swipes, failures and scan numbers establish only application behavior. Simulated backfill emits stable unknown-credential buckets and is not a device-history recovery implementation. Door opening, physical credential disable/expiry, reader faults and offline schedules remain unverified.
+**Initial delivery evidence (historical): controller integration was simulated.** At that earlier stage no physical controller was connected, reactivated, queried or commanded. Native read-only evidence above now supersedes the connection/read limitation; physical write acceptance remains pending. Simulated confirmation, communication timestamps, swipes, failures and scan numbers establish only application behavior. Simulated backfill emits stable unknown-credential buckets and is not a device-history recovery implementation. Door opening, physical credential disable/expiry, reader faults and offline schedules remain unverified.
 
 For real integration:
 

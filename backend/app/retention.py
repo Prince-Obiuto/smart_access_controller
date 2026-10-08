@@ -114,8 +114,8 @@ def run_retention(db, settings, at=None):
     for model, soft_date, purge_date in [
         (
             AccessEvent,
-            lambda r: r.at + timedelta(days=90),
-            lambda r: r.at + timedelta(days=120),
+            lambda r: (r.at or r.received_at) + timedelta(days=90),
+            lambda r: (r.at or r.received_at) + timedelta(days=120),
         ),
         (
             Audit,

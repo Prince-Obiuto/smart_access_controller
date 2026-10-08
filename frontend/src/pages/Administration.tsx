@@ -123,9 +123,13 @@ function Schedules() {
             }
           />
           <div className="button-row">
-            <Action onClick={() => act({ type: "retry-sync", schedule: true })}>
-              Apply simulated schedule
-            </Action>
+            {data.controllerWritesAvailable !== false && (
+              <Action
+                onClick={() => act({ type: "retry-sync", schedule: true })}
+              >
+                Apply simulated schedule
+              </Action>
+            )}
           </div>
           <div className="callout">
             Exactly one designated Super Admin physical card has a separate
@@ -251,8 +255,9 @@ function Settings() {
         <Panel title="Visitor card pool">
           <div className="padded">
             <p>
-              Add a reusable physical card asset. It becomes available only
-              after simulated disable confirmation.
+              {data.controllerWritesAvailable === false
+                ? "Add a local pool asset. Device disable is unconfirmed and controller writes are unavailable."
+                : "Add a reusable physical card asset. It becomes available only after simulated disable confirmation."}
             </p>
             <FormFields
               fields={[{ name: "number", label: "Visitor pool card number" }]}

@@ -341,12 +341,17 @@ def test_schedules_privileged_card_and_failed_designation(env, png):
     u, _, a, _, assignment = issued(env, png)
     sa = session_client(env, "SUPER_ADMIN")
     card = u.get("/api/workspace").json()["cards"][0]
-    monday = datetime(2026, 10, 5, 11, tzinfo=timezone.utc)
+    current = now()
+    monday = (current + timedelta(days=(7 - current.weekday()) % 7 or 7)).replace(
+        hour=11, minute=0, second=0, microsecond=0
+    )
     schedule = {
         "weekdays": [1, 2, 3, 4, 5],
         "opens": "08:00",
         "closes": "18:00",
-        "exceptions": [{"date": "2026-10-05", "closed": True, "label": "Holiday"}],
+        "exceptions": [
+            {"date": monday.date().isoformat(), "closed": True, "label": "Holiday"}
+        ],
     }
     cmd(a, {"type": "schedule", "schedule": schedule})
     assert a.get("/api/workspace").json()["schedule"]["sync"] == "PENDING"

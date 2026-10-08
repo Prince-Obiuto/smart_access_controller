@@ -91,6 +91,11 @@ def export_records(db, actor, settings, family, filters, format):
             "direction",
             "result",
             "type",
+            "receivedAt",
+            "deviceReader",
+            "deviceDoor",
+            "timestampFlags",
+            "simulated",
         ]
         if family == "events"
         else ["id", "at", "actor", "action", "target", "result"]
@@ -109,7 +114,7 @@ def export_records(db, actor, settings, family, filters, format):
         pdf = Canvas(out, pagesize=A4)
         y = 810
         pdf.setFont("Helvetica-Bold", 13)
-        pdf.drawString(35, y, "IFT E-Library: filtered records (simulated)")
+        pdf.drawString(35, y, "IFT E-Library: filtered records (source labelled per event)")
         y -= 25
         pdf.setFont("Helvetica", 8)
         for row in records:

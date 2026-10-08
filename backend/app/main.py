@@ -198,7 +198,7 @@ def create_app(settings=None, database=None):
                         dict.fromkeys(result.get("operationIds", []) + additional)
                     ),
                 }
-        response = operation_result(db, result)
+        response = operation_result(db, result, settings)
         if result.get("message", "").startswith("Replacement pending"):
             response["message"] = (
                 "Replacement issued with simulated activation confirmation."
@@ -219,9 +219,10 @@ def create_app(settings=None, database=None):
             database.health()
         except Exception:
             return JSONResponse(
-                {"status": "unavailable", "controllerMode": "SIMULATED"}, 503
+                {"status": "unavailable", "controllerMode": settings.controller_mode},
+                503,
             )
-        return {"status": "healthy", "controllerMode": "SIMULATED"}
+        return {"status": "healthy", "controllerMode": settings.controller_mode}
 
     @app.get("/api/auth/csrf")
     def csrf(request: Request, response: Response, db: DB):
@@ -349,7 +350,7 @@ def create_app(settings=None, database=None):
                 raise DomainError(
                     "CONFLICT", "Idempotency key was used with a different command."
                 )
-            return operation_result(db, previous.result)
+            return operation_result(db, previous.result, settings)
         result = AccessService(db, actor, settings).execute(value)
         entry = Idempotency(
             account_id=actor.id,
@@ -580,6 +581,10 @@ def create_app(settings=None, database=None):
     def scan_start(request: Request, db: DB):
         actor = actor_for(db, request, True)
         require(db, actor, "issue", settings)
+        if not settings.controller_writes_available:
+            raise DomainError(
+                "NOT_CONNECTED", "Enrolment unavailable in read-only mode.", 409
+            )
         scan = Enrolment(
             actor_id=actor.id, state="WAITING", expires_at=now() + timedelta(seconds=30)
         )
@@ -592,6 +597,12 @@ def create_app(settings=None, database=None):
     @app.get("/api/enrolment-sessions/{id}")
     def scan_poll(id: str, request: Request, db: DB):
         actor = actor_for(db, request)
+        if not settings.controller_writes_available:
+            raise DomainError(
+                "NOT_CONNECTED",
+                "Simulated enrolment unavailable in read-only mode.",
+                409,
+            )
         scan = scan_get(db, actor, id)
         if scan.state == "WAITING":
             scan.state = "DETECTED"
@@ -603,6 +614,10 @@ def create_app(settings=None, database=None):
         id: str, action: Literal["confirm", "cancel"], request: Request, db: DB
     ):
         actor = actor_for(db, request, True)
+        if action == "confirm" and not settings.controller_writes_available:
+            raise DomainError(
+                "NOT_CONNECTED", "Enrolment unavailable in read-only mode.", 409
+            )
         scan = scan_get(db, actor, id)
         if action == "confirm" and scan.state != "DETECTED":
             raise DomainError("CONFLICT", "Scan expired, cancelled or not detected.")

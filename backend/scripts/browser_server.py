@@ -19,6 +19,9 @@ os.environ.update(
     UPLOAD_DIR=str(ROOT / "backend/var/browser-uploads"),
     ALLOWED_ORIGINS="http://127.0.0.1:5175",
     SIMULATION_CONTROLS_ENABLED="true",
+    CONTROLLER_MODE=os.environ.get("IFT_BROWSER_CONTROLLER_MODE", "SIMULATED"),
+    HIKVISION_USERNAME="",
+    HIKVISION_PASSWORD="",
 )
 from alembic.config import Config
 from alembic import command
@@ -63,6 +66,34 @@ with dbase.session() as db:
                 password_hash=PASSWORDS.hash("Synthetic-browser-password!"),
             )
         )
+    if settings.controller_mode == "HIKVISION_READ_ONLY":
+        # Parser-to-PostgreSQL-to-browser fixtures only. Never a live device
+        # acceptance claim; the test process has no credentials and no jobs.
+        from app.hikvision import parse_event
+        from app.events import store_real_event
+        from app.common import now
+
+        at = now().replace(microsecond=0)
+        for serial, reader, outcome, stamp in [
+            (1, 1, "GRANTED", list(at.timetuple()[:6])),
+            (2, 99, "UNKNOWN", [0] * 6),
+        ]:
+            row = parse_event(
+                {
+                    "major": 5,
+                    "minor": 1,
+                    "serial": serial,
+                    "door": 1,
+                    "reader": reader,
+                    "time": stamp,
+                    "timeType": 1,
+                    "outcome": outcome,
+                    "cardHex": (b"00000123" + bytes(24)).hex(),
+                },
+                "synthetic-browser-fixture",
+                clock_verified=True,
+            )
+            store_real_event(db, row, "controller-1")
     db.commit()
 dbase.engine.dispose()
 (ROOT / "backend/var").mkdir(parents=True, exist_ok=True)

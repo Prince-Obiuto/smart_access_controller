@@ -3,6 +3,48 @@ from typing import Protocol
 from datetime import datetime
 from .models import Operation, Controller
 
+READ_ONLY_MESSAGE = (
+    "Controller writes unavailable in read-only mode. "
+    "Local intent retained; no device confirmation."
+)
+
+
+class ControllerReadUnavailable(Exception):
+    """Safe transport failure; never substitute simulated events or move a checkpoint."""
+
+
+class HikvisionReadOnlyAdapter:
+    """Read-only SDK session; execute always refuses mutations."""
+
+    mode = "HIKVISION_READ_ONLY"
+
+    def __init__(self, settings=None):
+        self.settings = settings
+        if settings is not None:
+            from .hikvision import NativeSession
+            self.session = NativeSession(settings)
+        else:
+            self.session = None
+
+    def execute(self, operation, controller, controls):
+        return AdapterResult("PENDING", READ_ONLY_MESSAGE)
+
+    def collect_events(self, controller, start, end):
+        if self.session is None:
+            raise ControllerReadUnavailable("SDK_TRANSPORT_UNAVAILABLE")
+        if controller.id != self.settings.hikvision_controller_id:
+            raise ControllerReadUnavailable("CONTROLLER_TARGET_NOT_CONFIGURED")
+        return self.session.read_history(start, end, self.settings.hikvision_event_limit)
+
+
+def adapter_for(settings):
+    if settings.controller_mode == "HIKVISION_READ_ONLY":
+        return HikvisionReadOnlyAdapter(settings)
+    if settings.controller_mode == "SIMULATED":
+        return SimulatedAdapter()
+    # Never turn an unknown mode into mock success.
+    raise ValueError("Unsupported controller mode.")
+
 
 @dataclass
 class AdapterResult:
@@ -19,7 +61,7 @@ class AccessControllerAdapter(Protocol):
     ) -> AdapterResult: ...
     def collect_events(
         self, controller: Controller, start: datetime, end: datetime
-    ) -> list[dict]: ...
+    ) -> list[dict] | tuple[list[dict], bool]: ...
 
 
 class SimulatedAdapter:

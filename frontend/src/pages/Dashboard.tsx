@@ -43,7 +43,16 @@ export function Dashboard() {
           <p>A clear view of your library, from entry to exit.</p>
         </div>
         <div className="live-label">
-          <span className="status-dot" /> Simulated live monitor
+          {data.controllerMode === "HIKVISION_READ_ONLY" ? (
+            <Icon name="warning" size={15} />
+          ) : (
+            <span className="status-dot" />
+          )}{" "}
+          {data.controllerMode === "HIKVISION_READ_ONLY"
+            ? data.controllerReadStatus === "CONNECTED"
+              ? "Real event monitor"
+              : "Event connection blocked"
+            : "Simulated live monitor"}
         </div>
       </div>
       <div className="metrics">
@@ -67,7 +76,12 @@ export function Dashboard() {
               "/" +
               data.devices.length,
             icon: "door",
-            note: "Local network · simulated",
+            note:
+              data.controllerMode === "HIKVISION_READ_ONLY"
+                ? data.controllerReadStatus === "CONNECTED"
+                  ? "Read-only · SDK connection"
+                  : "Read-only · connection unverified"
+                : "Local network · simulated",
           },
           {
             label: "Critical alerts",
@@ -100,8 +114,16 @@ export function Dashboard() {
         >
           <EventTable events={events} />
           <div className="panel-footer">
-            <span className="status-dot" /> Demo events update automatically. No
-            real controller connection.
+            {data.controllerMode === "HIKVISION_READ_ONLY" ? (
+              <Icon name="warning" size={15} />
+            ) : (
+              <span className="status-dot" />
+            )}{" "}
+            {data.controllerMode === "HIKVISION_READ_ONLY"
+              ? data.controllerReadStatus === "CONNECTED"
+                ? `History: ${data.controllerHistoryStatus ?? "UNKNOWN"} · Live subscription: ${data.controllerLiveStatus ?? "UNKNOWN"}. A grant does not prove physical passage. ${data.controllerReaderMappingVerified ? "Reader directions verified by ordinary swipes." : "Reader mapping awaits swipe verification."}`
+                : "Real event collection is blocked. Historical simulated records remain labelled. A swipe does not prove physical passage."
+              : "Demo events update automatically. No real controller connection."}
           </div>
         </Panel>
         <div className="stack">
@@ -121,7 +143,17 @@ export function Dashboard() {
                     <dd>{d.model}</dd>
                     <dt>Connection</dt>
                     <dd>
-                      <Badge value={d.online ? "ONLINE" : "FAILED"} />
+                      <Badge
+                        value={
+                          data.controllerMode === "HIKVISION_READ_ONLY"
+                            ? d.online
+                              ? "ONLINE"
+                              : "UNKNOWN"
+                            : d.online
+                              ? "ONLINE"
+                              : "FAILED"
+                        }
+                      />
                     </dd>
                     <dt>Door sensor</dt>
                     <dd>
@@ -132,14 +164,15 @@ export function Dashboard() {
                       <Time value={d.lastCommunication} />
                     </dd>
                   </dl>
-                  {can(data.identity.role, "unlock") && (
-                    <button
-                      className="primary full"
-                      onClick={() => setUnlock(true)}
-                    >
-                      <Icon name="door" /> Timed unlock
-                    </button>
-                  )}
+                  {can(data.identity.role, "unlock") &&
+                    data.controllerWritesAvailable !== false && (
+                      <button
+                        className="primary full"
+                        onClick={() => setUnlock(true)}
+                      >
+                        <Icon name="door" /> Timed unlock
+                      </button>
+                    )}
                   <small className="muted">
                     Command acknowledgement does not prove the door opened.
                   </small>
@@ -243,6 +276,7 @@ export function EventTable({ events }: { events: AccessEvent[] }) {
                     <strong>{e.person}</strong>
                     <small>
                       {e.card} · {e.type.replaceAll("_", " ").toLowerCase()}
+                      {e.simulated ? " · Simulated" : " · Device event"}
                     </small>
                   </div>
                 </div>
@@ -250,11 +284,24 @@ export function EventTable({ events }: { events: AccessEvent[] }) {
               <td>
                 <span className="direction">
                   <Icon name="arrow" size={15} />
-                  {e.direction === "ENTRY" ? "Entry" : "Exit"}
+                  {e.direction === "ENTRY"
+                    ? "Entry"
+                    : e.direction === "EXIT"
+                      ? "Exit"
+                      : "Unknown"}
                 </span>
+                {!e.simulated && (
+                  <small>
+                    Device reader {e.deviceReader ?? "unknown"} · mapping{" "}
+                    {e.readerMappingVerified ? "verified" : "unverified"}
+                  </small>
+                )}
               </td>
               <td>
                 <Time value={e.at} />
+                {!!e.timestampFlags?.length && (
+                  <small>{e.timestampFlags.join(", ")}</small>
+                )}
               </td>
               <td>
                 <Badge value={e.result} />

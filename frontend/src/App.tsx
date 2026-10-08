@@ -159,7 +159,13 @@ function Application() {
       <Icon name="warning" size={15} />
       {service.mode === "mock"
         ? "Demo mode — hardware actions are simulated."
-        : "Controller integration is simulated."}
+        : data?.controllerMode === "HIKVISION_READ_ONLY"
+          ? data.controllerReadStatus === "CONNECTED"
+            ? "Hikvision read-only · SDK connection active · controller writes unavailable."
+            : "Hikvision read-only · event connection blocked · controller writes unavailable."
+          : data?.controllerMode === "SIMULATED"
+            ? "Controller integration is simulated."
+            : "Controller status available after sign-in."}
     </div>
   );
   if (initial)

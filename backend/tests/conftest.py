@@ -23,6 +23,7 @@ def password_hash():
 @pytest.fixture
 def env(tmp_path, password_hash):
     settings = Settings(
+        controller_mode="SIMULATED",
         jobs_enabled=False,
         simulation_controls_enabled=True,
         upload_dir=tmp_path / "uploads",

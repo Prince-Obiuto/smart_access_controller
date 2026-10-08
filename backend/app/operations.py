@@ -14,7 +14,7 @@ from .models import (
     Account,
 )
 from .common import get_setting, set_setting, audit, notify, now, iso
-from .controllers import SimulatedAdapter
+from .controllers import adapter_for, READ_ONLY_MESSAGE
 from .service import AccessService, ENDED
 from .security import DomainError
 from .db import domain_lock
@@ -95,8 +95,12 @@ def finalize_assignment(db, a, at):
 
 
 def process_operations(db, settings, at=None, adapter=None):
+    # Gate before attempts, stale-row changes, commits or assignment finalization.
+    # An injected simulated adapter cannot bypass the configured hardware mode.
+    if not settings.controller_writes_available:
+        return
     at = at or now()
-    adapter = adapter or SimulatedAdapter()
+    adapter = adapter or adapter_for(settings)
     domain_lock(db)
     controls = get_setting(db, "simulation")
     pending = list(
@@ -361,12 +365,29 @@ def process_operations(db, settings, at=None, adapter=None):
     db.commit()
 
 
-def operation_result(db, result):
+def operation_result(db, result, settings=None):
     ids = result.get("operationIds", [])
     ops = [db.get(Operation, id) for id in ids]
     ops = [o for o in ops if o]
     if not ops:
         return {k: v for k, v in result.items() if k != "operationIds"}
+    if settings and not settings.controller_writes_available:
+        return {
+            "intendedState": ops[-1].desired,
+            "result": "PENDING",
+            "message": READ_ONLY_MESSAGE,
+            "confirmations": [
+                {
+                    "controllerId": o.controller_id,
+                    "confirmed": False,
+                    "state": "OUT_OF_SYNC",
+                    "intendedState": o.desired,
+                    "simulated": True,
+                }
+                for o in ops
+            ],
+            "operationIds": ids,
+        }
     statuses = {o.status for o in ops}
     status = (
         "UNCERTAIN"

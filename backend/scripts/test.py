@@ -17,6 +17,10 @@ os.environ["DATABASE_URL"] = url.set(database=name).render_as_string(
     hide_password=False
 )
 os.environ["JOBS_ENABLED"] = "false"
+os.environ["CONTROLLER_MODE"] = "SIMULATED"
+# Test processes must not inherit live controller credentials.
+os.environ["HIKVISION_USERNAME"] = ""
+os.environ["HIKVISION_PASSWORD"] = ""
 os.environ["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
 from alembic.config import Config
 from alembic import command

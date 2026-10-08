@@ -66,20 +66,23 @@ def card_view(c):
     )
 
 
-def confirmation_view(c):
+def confirmation_view(c, read_only=False):
     return clean(
         {
             "controllerId": c.controller_id,
-            "confirmed": c.state == "SYNCHRONIZED" and c.desired == c.last_confirmed,
-            "state": c.state,
+            "confirmed": not read_only
+            and c.state == "SYNCHRONIZED"
+            and c.desired == c.last_confirmed,
+            "state": "OUT_OF_SYNC" if read_only else c.state,
             "intendedState": c.desired,
             "lastConfirmedState": c.last_confirmed,
             "at": iso(c.confirmed_at),
+            "simulated": True,
         }
     )
 
 
-def assignment_view(db, a):
+def assignment_view(db, a, read_only=False):
     conf = list(
         db.scalars(select(Confirmation).where(Confirmation.assignment_id == a.id))
     )
@@ -91,8 +94,8 @@ def assignment_view(db, a):
             "start": iso(a.start),
             "expiry": iso(a.expiry),
             "state": a.state,
-            "sync": a.sync,
-            "confirmations": [confirmation_view(c) for c in conf],
+            "sync": "OUT_OF_SYNC" if read_only else a.sync,
+            "confirmations": [confirmation_view(c, read_only) for c in conf],
             "reason": a.reason,
             "returnedAt": iso(a.returned_at),
         }
@@ -180,6 +183,12 @@ def event_view(e):
             "result": e.result,
             "type": e.event_type,
             "simulated": e.simulated,
+            "deviceDoor": e.raw.get("deviceDoor"),
+            "deviceReader": e.raw.get("deviceReader"),
+            "timestampFlags": e.raw.get("flags", []),
+            "readerMappingVerified": bool(e.raw.get("readerMappingVerified"))
+            if not e.simulated
+            else None,
             "deletedAt": iso(e.deleted_at),
             "purgeAt": iso(e.purge_at),
             "restored": e.restored,
@@ -205,6 +214,25 @@ def audit_view(a):
 
 
 def snapshot(db, actor, settings, at=None):
+    read_only = not settings.controller_writes_available
+    read_state = (
+        get_setting(db, "hikvision:" + settings.hikvision_controller_id)
+        if read_only
+        else {}
+    )
+    communicated = read_state.get("lastCommunication")
+    connected = False
+    if read_only and read_state.get("state") == "CONNECTED" and communicated:
+        try:
+            connected = (at or now()) - __import__("datetime").datetime.fromisoformat(
+                communicated
+            ) < __import__("datetime").timedelta(seconds=150)
+        except (ValueError, TypeError):
+            pass
+    read_status = "CONNECTED" if connected else read_state.get("state", "BLOCKED")
+    read_code = read_state.get("code", "NOT_CONNECTED")
+    if read_only and not connected and read_status == "CONNECTED":
+        read_status, read_code = "FAILED", "STALE_DEVICE_COMMUNICATION"
     perms = capabilities(settings)
     staff = actor.role != "USER"
     people = list(
@@ -234,12 +262,22 @@ def snapshot(db, actor, settings, at=None):
                     {
                         "id": controller.id,
                         "name": controller.name,
-                        "model": controller.model,
-                        "online": controller.online,
-                        "lastCommunication": iso(controller.last_communication),
+                        "model": read_state.get("model", controller.model)
+                        if controller.id == settings.hikvision_controller_id
+                        else controller.model,
+                        "online": connected
+                        and controller.id == settings.hikvision_controller_id
+                        if read_only
+                        else controller.online,
+                        "lastCommunication": communicated
+                        if connected
+                        and controller.id == settings.hikvision_controller_id
+                        else None
+                        if read_only
+                        else iso(controller.last_communication),
                         "doorId": d.id,
                         "door": d.name,
-                        "sensor": d.sensor,
+                        "sensor": "UNKNOWN" if read_only else d.sensor,
                     }
                 )
             )
@@ -265,16 +303,22 @@ def snapshot(db, actor, settings, at=None):
     designated = db.scalar(select(Card).where(Card.privileged == True))
     return {
         "identity": identity(db, actor),
-        "people": [person_view(db, p) for p in people],
-        "cards": [card_view(c) for c in cards],
-        "assignments": [assignment_view(db, a) for a in assignments],
+        "people": [
+            {**person_view(db, p), **({"sync": "OUT_OF_SYNC"} if read_only else {})}
+            for p in people
+        ],
+        "cards": [
+            {**card_view(c), **({"privileged": False} if read_only else {})}
+            for c in cards
+        ],
+        "assignments": [assignment_view(db, a, read_only) for a in assignments],
         "applications": [app_view(db, a) for a in applications],
         "visits": [visit_view(v) for v in visits],
         "devices": devices,
         "notifications": notices,
         "schedule": {
             **schedule.data,
-            "sync": schedule.sync,
+            "sync": "OUT_OF_SYNC" if read_only else schedule.sync,
             "exceptions": [
                 e.data
                 for e in db.scalars(
@@ -284,7 +328,11 @@ def snapshot(db, actor, settings, at=None):
         },
         "settings": {
             **payment,
-            **({"privilegedCardId": designated.id} if designated else {}),
+            **(
+                {"privilegedCardId": designated.id}
+                if designated and not read_only
+                else {}
+            ),
         },
         "controls": get_setting(db, "simulation")
         if actor.role == "SUPER_ADMIN"
@@ -296,6 +344,27 @@ def snapshot(db, actor, settings, at=None):
         },
         "clock": iso(at or now()),
         "controllerMode": settings.controller_mode,
-        "simulationControlsEnabled": settings.simulation_controls_enabled
+        "controllerWritesAvailable": settings.controller_writes_available,
+        "controllerReadStatus": read_status if read_only else "SIMULATED",
+        "controllerReadMessage": read_code if read_only else "SIMULATED",
+        "controllerReaderMappingVerified": bool(
+            get_setting(
+                db, "hikvision:reader-map:" + settings.hikvision_controller_id
+            ).get("verified")
+        )
+        if read_only
+        else False,
+        "controllerHistoryStatus": read_state.get("history", {}).get(
+            "status", "UNKNOWN"
+        )
+        if read_only
+        else "SIMULATED",
+        "controllerLiveStatus": read_state.get("stages", {})
+        .get("subscription", {})
+        .get("status", "UNKNOWN")
+        if read_only
+        else "SIMULATED",
+        "simulationControlsEnabled": not read_only
+        and settings.simulation_controls_enabled
         and actor.role == "SUPER_ADMIN",
     }

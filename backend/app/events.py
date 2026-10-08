@@ -17,6 +17,37 @@ from .common import notify, now, get_setting, set_setting, iso
 from .controllers import SimulatedAdapter
 
 
+def real_reader(db, controller_id, device_door, device_reader):
+    mapping = get_setting(db, "hikvision:reader-map:" + controller_id)
+    door = db.get(Door, mapping.get("doorId")) if mapping.get("doorId") else None
+    verified = bool(
+        mapping.get("verified")
+        and door
+        and door.controller_id == controller_id
+        and mapping.get("deviceDoor") == device_door
+    )
+    direction = (
+        mapping.get("readers", {}).get(device_reader, "UNKNOWN")
+        if verified
+        else "UNKNOWN"
+    )
+    reader = (
+        db.scalar(
+            select(Reader).where(
+                Reader.door_id == door.id, Reader.direction == direction
+            )
+        )
+        if verified
+        else None
+    )
+    if not reader:
+        direction = "UNKNOWN"
+    # Door identity can be retained independently of unverified reader direction.
+    if not door and controller_id == "controller-1" and device_door == "1":
+        door = db.get(Door, "door-1")
+    return door, reader, direction, bool(reader and verified)
+
+
 def schedule_allows(db, at):
     local = at.astimezone(ZoneInfo("Africa/Lagos"))
     schedule = db.get(Schedule, "normal").data
@@ -40,12 +71,25 @@ def store_event(
     event_type="CARD_SWIPE",
     controller_id="controller-1",
     received_at=None,
+    real=None,
 ):
     card = db.scalar(select(Card).where(Card.number == card_number))
     assignment = None
     # Match event-time validity to the immutable historical assignment, not the
     # card's current owner. Revocation/checkout end time is persisted separately.
-    if card:
+    if (
+        card
+        and at
+        and (
+            not real
+            or not set(real["flags"])
+            & {
+                "FUTURE_DEVICE_TIME",
+                "INVALID_OR_AMBIGUOUS_TIME",
+                "DEVICE_CLOCK_UNVERIFIED",
+            }
+        )
+    ):
         candidates = list(
             db.scalars(
                 select(Assignment)
@@ -62,12 +106,21 @@ def store_event(
             (a for a in candidates if not a.ended_at or at < a.ended_at), None
         )
     person = db.get(Person, assignment.person_id) if assignment else None
-    door = db.scalar(select(Door).where(Door.controller_id == controller_id))
-    reader = db.scalar(
-        select(Reader).where(Reader.door_id == door.id, Reader.direction == direction)
-    )
+    if real:
+        door, reader, direction, verified = real_reader(
+            db, controller_id, real["device_door"], real["device_reader"]
+        )
+        real["raw"] = {**real["raw"], "readerMappingVerified": verified}
+    else:
+        door = db.scalar(select(Door).where(Door.controller_id == controller_id))
+        reader = db.scalar(
+            select(Reader).where(
+                Reader.door_id == door.id, Reader.direction == direction
+            )
+        )
     granted = bool(
-        assignment
+        real is None
+        and assignment
         and assignment.state == "ACTIVE"
         and not card.revoked
         and not card.disabled
@@ -90,13 +143,15 @@ def store_event(
         "reference": person.reference if person and not person.purged else "",
         "card": card_number,
         "controller": controller_id,
-        "door": door.id,
-        "reader_id": reader.id,
+        "door": door.id if door else None,
+        "reader_id": reader.id if reader else None,
         "direction": direction,
-        "result": "GRANTED" if granted else "DENIED",
+        "result": real["result"] if real else "GRANTED" if granted else "DENIED",
         "event_type": event_type,
-        "simulated": True,
-        "raw": {"source": "SIMULATED", "credential": card_number},
+        "simulated": real is None,
+        "raw": real["raw"]
+        if real
+        else {"source": "SIMULATED", "credential": card_number},
         "restored": False,
     }
     id = db.scalar(
@@ -105,7 +160,16 @@ def store_event(
         .on_conflict_do_nothing(index_elements=["source_key"])
         .returning(AccessEvent.id)
     )
-    if id and not granted:
+    if id and real:
+        if real["flags"]:
+            notify(
+                db,
+                "Controller event needs review",
+                "Device event retained with timestamp or identity uncertainty: "
+                + ", ".join(real["flags"]),
+                "WARNING",
+            )
+    elif id and not granted:
         notify(
             db,
             "Unknown card attempt"
@@ -117,6 +181,19 @@ def store_event(
             "CRITICAL" if event_type in ["REVOKED_CARD", "FORCED_OPEN"] else "WARNING",
         )
     return id
+
+
+def store_real_event(db, event, controller_id):
+    return store_event(
+        db,
+        event["source_key"],
+        event["at"],
+        event["card"],
+        event_type=event["type"],
+        controller_id=controller_id,
+        received_at=event["received_at"],
+        real=event,
+    )
 
 
 def simulate_event(db, kind, at, person_id=None):
@@ -157,16 +234,27 @@ def backfill(db, at=None, adapter=None):
     at = at or now()
     adapter = adapter or SimulatedAdapter()
     for controller in db.scalars(select(Controller)):
-        checkpoint = get_setting(db, "backfill:" + controller.id)
+        key = (
+            "backfill:" + controller.id
+            if adapter.mode == "SIMULATED"
+            else "backfill:" + adapter.mode + ":" + controller.id
+        )
+        checkpoint = get_setting(db, key)
         start = (
             __import__("datetime").datetime.fromisoformat(checkpoint["at"])
             if checkpoint.get("at")
             else at - timedelta(minutes=2)
         )
         # A small overlap intentionally exercises source-key deduplication.
-        for event in adapter.collect_events(
-            controller, start - timedelta(minutes=2), at
-        ):
+        collected = adapter.collect_events(controller, start - timedelta(minutes=2), at)
+        if adapter.mode != "SIMULATED":
+            rows, complete = collected
+            for event in rows:
+                store_real_event(db, event, controller.id)
+            if complete:
+                set_setting(db, key, {"at": iso(at)})
+            continue
+        for event in collected:
             store_event(
                 db,
                 event["source_key"],
@@ -178,4 +266,4 @@ def backfill(db, at=None, adapter=None):
                 at,
             )
         if controller.online:
-            set_setting(db, "backfill:" + controller.id, {"at": iso(at)})
+            set_setting(db, key, {"at": iso(at)})

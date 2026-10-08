@@ -578,19 +578,23 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
           />
         </label>
         <div className="button-row">
-          <Action
-            onClick={async () => {
-              try {
-                setScan(await service.startScan());
-              } catch (e) {
-                notify((e as Error).message, true);
-              }
-            }}
-          >
-            Simulate scan card
-          </Action>
+          {data.controllerWritesAvailable !== false && (
+            <Action
+              onClick={async () => {
+                try {
+                  setScan(await service.startScan());
+                } catch (e) {
+                  notify((e as Error).message, true);
+                }
+              }}
+            >
+              Simulate scan card
+            </Action>
+          )}
           <button className="primary" type="submit" disabled={!number.trim()}>
-            Confirm enrolment & activate
+            {data.controllerWritesAvailable === false
+              ? "Save issuance request (writes blocked)"
+              : "Confirm enrolment & activate"}
           </button>
         </div>
       </form>
@@ -637,8 +641,9 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
         </p>
       )}
       <small>
-        Normal access swipes never enrol a card. All scanning and activation are
-        simulated.
+        {data.controllerWritesAvailable === false
+          ? "Controller writes and enrolment are unavailable. Saving local intent does not activate a card."
+          : "Normal access swipes never enrol a card. All scanning and activation are simulated."}
       </small>
     </Modal>
   );

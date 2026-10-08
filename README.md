@@ -1,6 +1,6 @@
 # IFT E-Library Access Control
 
-Phone-first React/TypeScript application connected to a durable FastAPI/PostgreSQL backend. **Controller integration is simulated.** This application has not been validated against a real DS-K2802. Runtime assets, authentication, uploads, exports and jobs operate locally; internet access is needed for initial dependency/image installation.
+Phone-first React/TypeScript application connected to a durable FastAPI/PostgreSQL backend. Controller modes are explicit: `SIMULATED` for demonstrations and `HIKVISION_READ_ONLY` for native SDK reads with all physical writes blocked. The local official Linux SDK now initializes in both runtimes, and native login/history/live transport and PostgreSQL ingestion are implemented. **Real events now reach PostgreSQL and the frontend.** Host/container TCP, SDK login, device identity, history and real-time subscription are verified. Owner-confirmed swipes established Reader 1 EXIT and Reader 2 ENTRY on Door 1. Runtime assets, authentication, uploads, exports and jobs operate locally; internet access is needed for initial dependency/image installation.
 
 ## Start locally with Docker Compose
 
@@ -73,7 +73,8 @@ The authenticated local operator must be an active Admin/Super Admin; Admin can 
 | `ALLOWED_ORIGINS` | Exact frontend origins allowed for CSRF-protected writes; include a chosen LAN development origin explicitly |
 | `UPLOAD_DIR`, `UPLOAD_LIMIT` | Private native upload directory and maximum bytes, default 5 MiB; relative directories resolve from the repository root |
 | `SESSION_HOURS` | Session lifetime, default 12 hours |
-| `CONTROLLER_MODE` | Only `SIMULATED` is supported; real mode is rejected |
+| `CONTROLLER_MODE` | `SIMULATED` or `HIKVISION_READ_ONLY`; read-only mode never dispatches physical writes |
+| `HIKVISION_*` | Private device credentials, SDK/bridge paths and bounded reads; see the capability guide |
 | `SIMULATION_CONTROLS_ENABLED` | Explicitly enables Super Admin-only failure/event controls |
 | `JOBS_ENABLED` | Native worker switch; Compose runs expiry/retention and durable operations jobs |
 
@@ -96,14 +97,49 @@ npm run build
 npx playwright install chromium
 npm run test:browser
 npm run test:connected
+npm run test:hikvision
 ```
 
 For a custom PostgreSQL user, substitute that username in `createdb`. The backend test runner derives credentials privately and refuses a non-`ift_test` database name. Tests truncate only their isolated test database, never `ift_access`. Connected browser tests use `ift_test_browser`, API port 8001 and Vite port 5175, create synthetic test accounts, and restart the actual API process. Run these test suites sequentially. No test credentials are loaded into the application database. Backup acceptance creates fresh `ift_test_backup_*`/`ift_test_restore_*` databases and reports their names for later operator cleanup.
 
 See [implementation and verification notes](docs/implementation-notes.md), [HTTP/service contract](docs/frontend-contract.md), and [backup/restore instructions](docs/backup-restore.md).
 
-## Hardware boundary
+## Hikvision read-only integration
 
-The reset DS-K2802 has not been reactivated. The adapter boundary and durable operation queue are implemented, but no Hikvision endpoints, SDK compatibility, offline controller schedules or physical confirmations are invented. Reactivation, documented transport selection and physical acceptance remain required. Simulated acknowledgements are never proof of credential removal or door opening; door sensor state remains UNKNOWN. Uncertain timed releases are never automatically replayed.
+The device response confirms DS-K2802, firmware V2.0.8 build 250625. Ordinary swipes confirmed **device Reader 1 is Door 1 EXIT and Reader 2 is Door 1 ENTRY**, correcting the initial expected direction mapping. The extracted `EN-HCNetSDKV6.1.9.4_build20220412_linux64/` package supplies the matching headers, libraries and access-control documentation. Our C++ bridge compiles against its actual declarations; Python declares no vendor ABI structures. SDK 6.1.9.4 initialization and cleanup succeeded on Ubuntu and in the Debian backend image. After the owner restored Ethernet, host and actual backend-container TCP/login/history checks succeeded at `10.10.20.8:8000`; the host route is directly through `enp0s31f6`, source `10.10.20.24`. Real-time subscription works alongside the existing legacy alarm client; the legacy channel initially returned capacity error 1924. No network or controller settings were changed.
 
-Existing Git history, remote and local files were preserved. This work is uncommitted; nothing was pushed, published or deployed.
+From the project root, using the existing private `.env` and backend virtual environment:
+
+```sh
+# Only if local credentials are missing: owner enters them in a private terminal.
+backend/.venv/bin/python backend/scripts/configure_hikvision.py
+# Set HIKVISION_SDK_DIR in private .env to the extracted package root above.
+# Build our host bridge; SDK files remain local and ignored.
+backend/.venv/bin/python backend/scripts/build_hikvision.py
+env PYTHONPATH=backend backend/.venv/bin/python -m app.hikvision_diagnostic --tcp-only
+env PYTHONPATH=backend backend/.venv/bin/python -m app.hikvision_diagnostic --sample-limit 20 --listen-seconds 60
+
+# Container bridge must be compiled for Debian, not copied from Ubuntu.
+docker compose build backend
+backend/.venv/bin/python backend/scripts/build_hikvision.py --container
+docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T backend python -m app.hikvision_diagnostic --tcp-only
+docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T backend python -m app.hikvision_diagnostic --sample-limit 20 --listen-seconds 60
+```
+
+`compose.hikvision.yaml` mounts the original SDK and locally built bridge read-only. Vendor files never enter Git or the image. Initial container bridge compilation downloads a compiler into a disposable container; subsequent runtime operation stays local. Keep upstream notices; no redistribution permission is inferred from the included open-source notices.
+
+When the operator chooses to start the existing local container installation, use `docker compose -f compose.yaml -f compose.hikvision.yaml up -d backend` so the SDK mounts are present. This startup command was not executed here; the existing API remains stopped. The frontend continues to use HTTP mode and its normal local `/api` proxy. Native development uses the host bridge with the existing native startup command above.
+
+Diagnostics do not store events. The normal backend worker uses the native session, commits real events and complete historical checkpoints atomically, backfills every two minutes with overlap, and deduplicates live/history delivery. To verify ingestion locally without starting the API or dispatching any outbox operations, first apply the additive migration and then run the bounded collector against the existing application database:
+
+```sh
+backend/.venv/bin/alembic -c backend/alembic.ini upgrade head
+env PYTHONPATH=backend backend/.venv/bin/python -m app.hikvision_collect --seconds 120
+# Container equivalent, choosing the existing container database/upload configuration:
+docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T backend alembic upgrade head
+docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T backend python -m app.hikvision_collect --seconds 120
+```
+
+Choose the installation's existing backend runtime. The additive migration and bounded collectors were run against the existing application database and real events were persisted. The API service was not deployed or started persistently. Existing pending operations remain preserved and blocked. Login and event reads cannot synchronize card permissions. Unlock, enrolment, person/card/schedule/clock writes, reset and upgrade are unavailable. Existing simulated history remains labelled and there is no mock fallback.
+
+See [SDK evidence, setup, recovery limits and physical acceptance](docs/hikvision-capabilities.md). Owner-confirmed exit at 15:54:13 and entry at 15:55:10 Africa/Lagos are stored with verified reader directions. Actual API responses containing real rows rendered successfully on phone and laptop using a temporary read-only browser snapshot harness; ordinary operator login into a running installation remains a separate check. The physical user's card has no local assignment, so the application correctly retains Unknown credential rather than inferring an owner from chat. A grant or swipe does not prove physical passage. No commit, push or deployment was performed.

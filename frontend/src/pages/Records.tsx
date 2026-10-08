@@ -53,7 +53,7 @@ export function CardsActivity() {
                   <Badge value={c.revoked ? "REVOKED" : c.kind} />
                 </div>
                 <h2>{c.number}</h2>
-                {c.privileged && (
+                {c.privileged && data.controllerWritesAvailable !== false && (
                   <p className="callout">
                     Designated Super Admin card · unrestricted 24/7, including
                     holidays.
@@ -62,9 +62,11 @@ export function CardsActivity() {
                 {c.poolState && <Badge value={c.poolState} />}
                 <p>
                   Permission:{" "}
-                  {c.disabled
-                    ? "Confirmed disabled (simulated)"
-                    : "Enabled or removal unconfirmed"}
+                  {data.controllerWritesAvailable === false
+                    ? "Unknown on device — controller writes unavailable"
+                    : c.disabled
+                      ? "Confirmed disabled (simulated)"
+                      : "Enabled or removal unconfirmed"}
                 </p>
                 {data.assignments
                   .filter((a) => a.cardId === c.id)
@@ -110,18 +112,19 @@ export function CardsActivity() {
                                 Revoke assignment
                               </button>
                             )}
-                            {a.sync !== "SYNCHRONIZED" && (
-                              <Action
-                                onClick={() =>
-                                  act({
-                                    type: "retry-sync",
-                                    assignmentId: a.id,
-                                  })
-                                }
-                              >
-                                Retry simulated sync
-                              </Action>
-                            )}
+                            {a.sync !== "SYNCHRONIZED" &&
+                              data.controllerWritesAvailable !== false && (
+                                <Action
+                                  onClick={() =>
+                                    act({
+                                      type: "retry-sync",
+                                      assignmentId: a.id,
+                                    })
+                                  }
+                                >
+                                  Retry simulated sync
+                                </Action>
+                              )}
                           </div>
                         )}
                       </div>
@@ -230,7 +233,11 @@ export function Records({ family }: { family: "events" | "audits" }) {
   return (
     <Panel
       title={family === "events" ? "Access activity" : "Audit history"}
-      subtitle="Africa/Lagos · synthetic demonstration records"
+      subtitle={
+        family === "events"
+          ? "Africa/Lagos · simulated events are labelled"
+          : "Africa/Lagos · application audit history"
+      }
       action={
         can(data.identity.role, "export") && (
           <div className="button-row">
@@ -287,6 +294,7 @@ export function Records({ family }: { family: "events" | "audits" }) {
                 <option value="">Both readers</option>
                 <option>ENTRY</option>
                 <option>EXIT</option>
+                <option>UNKNOWN</option>
               </select>
             </label>
           )}
@@ -300,6 +308,7 @@ export function Records({ family }: { family: "events" | "audits" }) {
                 <option value="">All results</option>
                 <option>GRANTED</option>
                 <option>DENIED</option>
+                <option>UNKNOWN</option>
               </select>
             ) : (
               <input
@@ -352,6 +361,14 @@ export function Records({ family }: { family: "events" | "audits" }) {
                 <tr key={row.id}>
                   <td>
                     <Time value={row.at} />
+                    {"card" in row && !!row.timestampFlags?.length && (
+                      <small>{row.timestampFlags.join(", ")}</small>
+                    )}
+                    {"card" in row && !row.at && (
+                      <small>
+                        Received: <Time value={row.receivedAt} />
+                      </small>
+                    )}
                   </td>
                   {"card" in row ? (
                     <>
@@ -365,11 +382,20 @@ export function Records({ family }: { family: "events" | "audits" }) {
                       </td>
                       <td>
                         {row.controller}
-                        <small>{row.door}</small>
+                        <small>
+                          {row.door ?? "Unknown door"}
+                          {!row.simulated &&
+                            ` · Device door ${row.deviceDoor ?? "unknown"}`}
+                        </small>
                       </td>
                       <td>
                         {row.direction}
-                        <small>{row.type}</small>
+                        <small>
+                          {row.type}
+                          {row.simulated
+                            ? " · Simulated"
+                            : ` · Device reader ${row.deviceReader ?? "unknown"} · mapping ${row.readerMappingVerified ? "verified" : "unverified"}`}
+                        </small>
                       </td>
                       <td>
                         <Badge value={row.result} />
