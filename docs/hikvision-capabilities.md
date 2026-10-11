@@ -1,8 +1,8 @@
 # Hikvision read-only capability evidence
 
-**Real events now reach PostgreSQL, the API and frontend rendering.** Host/container SDK login, identity, history, real-time subscription and ordinary owner-observed entry/exit swipes succeeded. All device writes remain blocked and existing pending operations are preserved. Broader physical acceptance and ordinary operator-login verification remain separate checks.
+**Real events now reach PostgreSQL, the API and frontend rendering.** Host/container SDK login, identity, history, real-time subscription and ordinary owner-observed entry/exit swipes succeeded. The current installation remains read-only and pending operations are preserved. Controlled card-access execution is now prepared with additional activation/readback safeguards; no device write has been performed. Normal owner login is recorded; the final Ethernet link is DOWN and host/container probes time out. Physical recovery and write acceptance remain pending.
 
-## Evidence from this run
+## Evidence from the prior read-only stage
 
 | Check | Observed result |
 |---|---|
@@ -19,7 +19,7 @@
 | Historical events | Actual container query completed 53 events in its then-current hour window (sample limit 100). An earlier 20-event sample was correctly PARTIAL. Subsequent bounded collectors persisted additional device records. |
 | Live subscription | Legacy client mode returned error 1924 (capacity exhausted). Documented real-time mode `byDeployType=1` succeeds alongside the existing client. Both runtimes received actual callbacks; one monitored host session recorded 5 live deliveries. Final container diagnostic received a live callback and completed a 6-event two-minute history query. |
 | Reader mapping | Owner confirmed card ending 3895: Reader 1 / Door 1 at 15:54:13 Lagos was physical EXIT; Reader 2 / Door 1 at 15:55:10 was physical ENTRY. Both GRANTED. Mapping is **1 EXIT / 2 ENTRY**, correcting the original expectation; no wiring/controller change. |
-| Events in application | Final database check counted 169 real device records, including granted/denied/unknown and owner-observed swipes; original simulated history retained separately. Actual API returned the real rows; phone/laptop rendered actual responses in a read-only snapshot harness. This is distinct from a normal operator login into a continuously running API, which was not deployed. |
+| Events in application (prior read-only stage) | That stage counted 169 real device records, including granted/denied/unknown and owner-observed swipes; original simulated history retained separately. Actual API returned the real rows; phone/laptop rendered actual responses in a read-only snapshot harness. This is distinct from a normal operator login into a continuously running API, which was not deployed. |
 | Permission/outbox preservation | Before/after hashes of existing operation and confirmation rows match. This database had zero such rows at baseline; regression tests additionally exercise nonempty pending outboxes. No card permissions synchronized. |
 
 
@@ -132,13 +132,13 @@ Do not repeat this command with guessed directions/event IDs. On a new installat
 
 Real API responses were verified using an uncommitted test authentication session rolled back at the end, without changing an account/password or persisting a login. Phone/laptop frontend rendering used those actual responses through a temporary read-only snapshot harness; it did not fabricate event rows or start a persistent API. Private local evidence/snapshots/screenshots remain ignored under `backend/var/`.
 
-Remaining checks: owner signs in normally to the existing local installation once started; confirm ongoing worker ingestion/UI updates, physical denied-card scenarios, real visitor-card reuse/ownership after registration, safe cable disconnect/reconnect and backlog recovery, clock-error handling, serial wrap/reset and alternate callback layouts on this firmware. Historical denied events and live/history duplicate suppression have been observed, but those do not establish every physical scenario. A swipe/grant is not proof of physical passage. Future card/schedule writes remain a separate authorized phase requiring authoritative acknowledgement/readback and physical acceptance.
+Current continuation recorded a normal owner login and ongoing worker ingestion (see the new section below). Remaining checks: confirm owner-observed live UI updates, physical denied-card scenarios, real visitor-card reuse/ownership after registration, safe cable disconnect/reconnect and backlog recovery, clock-error handling, serial wrap/reset and alternate callback layouts on this firmware. Historical denied events and live/history duplicate suppression have been observed, but those do not establish every physical scenario. A swipe/grant is not proof of physical passage. Controlled card/schedule writes are now prepared in the current authorized phase, with activation blocked until the evidence and designated-card requirements below are satisfied.
 
-## Local verification
+## Prior read-only stage verification
 
 Current tests use isolated databases and synthetic accounts/events with device credentials removed. They do not establish device support. Native builds and successful actual SDK/device operations are separately recorded above. See README for the full regression commands. The added tests cover UTC/Lagos live-history dedup, leading zeroes, invalid timestamps/unknown readers/results, immutable historical ownership, partial/complete/reconnect checkpoints, failed-commit live retention, callback-gap recovery, native queue overflow, bounded hung-child shutdown, authentication-stop behavior and stale UI communication. Read-only regression browser checks use synthetic device-shaped fixtures. The separate private snapshot harness additionally rendered actual persisted hardware responses, without claiming normal operator authentication or a deployed API. Shutdown tests cover committing final in-transit callbacks without advancing history checkpoints.
 
-No commit, push, application deployment, controller mutation or pending-operation execution was performed.
+The prior stage performed no commit, push, application deployment, controller mutation or pending-operation execution.
 
 
 | Final validation | Result |
@@ -166,3 +166,36 @@ Earlier pending frontend/backend/read-only work remains in the working tree. Thi
 - Handover: `README.md`, `docs/hikvision-capabilities.md`, `docs/frontend-contract.md`, `docs/implementation-notes.md`.
 
 Generated SDK binaries, build manifests, private snapshots and verification harnesses are local ignored artifacts under the SDK root / `backend/var/`, not repository deliverables. No application data or pending operations were reset; no commit, push or deployment occurred.
+
+
+## Controlled-write continuation: current status
+
+The existing local Compose backend was started using `compose.hikvision.yaml`; it is healthy in **HIKVISION_READ_ONLY**. The existing HTTP frontend serves port 5173. Normal owner password/session login produced a real `LOGIN` audit at **2026-10-08 17:18:36 Lagos**. Unauthenticated workspace access through that frontend proxy returned 401. No bootstrap, password reset, test-auth session or owner impersonation was used. The owner skipped the physical cable test. Role and CSRF regressions use isolated accounts via normal HTTP login and are separately reported.
+
+A preservation check during this continuation counted **234 real events** (increased from 169), one existing account, and unchanged operation/confirmation hashes. There were zero actual outbox/confirmation rows, as at the previous baseline; nonempty held-outbox behavior is exercised by regressions. The verified reader-map setting remains Reader 1 EXIT / Reader 2 ENTRY. Unknown swiped credentials remain unknown; no person/card import or controller permission synchronization occurred.
+
+Read-only inventory established four existing controller cards and card-access week, holiday, group and template GET interfaces. Existing enabled templates 1/2 (“All-Day Authorized” / “All-Day Denied”) and their plans remain untouched. Card identifiers and full inventory stay in ignored mode-600 local artifacts. The native structures compiled at 2708/40/52 bytes (card/condition/query), 920 bytes (week), 160 (holiday), 136 (group), 140 (template); short callbacks and mismatched getter lengths fail explicitly.
+
+**Activation is currently blocked.** Card-access template GET succeeds at 1–128 but 129–255 returns SDK error 11, not a proven absence result. V50 boundary probes agree. The returned ACS XML omits template capacity; a complete ownership/resource inventory cannot yet be claimed. Nonuniform weekly ordering also lacks authoritative evidence. No owner-designated spare card/person or visitor test credential was supplied. The unknown swiped card was not chosen on the owner's behalf. No setter or AUTHORIZE command was sent to a real native session.
+
+Prepared implementation adds an explicit `HIKVISION_CONTROLLED` mode plus authenticated per-controller/credential/person/resource scopes, epoch-based backlog hold and individual review, serialized durable execution, independent priority disable worker, bounded retries, pre-send hashes, GET-first timeout reconciliation, subsequent readback, current-state revalidation, physical replacement/visitor barriers and separate explicitly designated unrestricted schedule support. Native setter primitives are **implemented but not device-verified**. No remote-unlock, door-state schedule, person/biometric, clock, reset, network or firmware write is exposed. Read-only mode remains an independent gate.
+
+See [controlled-write interfaces, commands, ownership limits and prepared physical sequence](hikvision-controlled-writes.md). The guide distinguishes successful reads from untested writes, and documents the current activation blocker without a bypass. Physical issue/grant, revoke/deny, backend-off expiry, weekly/holiday denial, replacement recovery, returned-visitor denial/reassignment, unrestricted hours and Ethernet recovery remain pending.
+
+| Continuation verification | Result |
+|---|---|
+| Backend isolated PostgreSQL suite | 88 passed; two existing non-failing deprecation warnings. Synthetic transports, no physical credentials. |
+| Frontend unit tests/typecheck/build | 37 passed; typecheck and build passed. |
+| Mock browser phone/laptop | 6 passed. |
+| Connected HTTP/PostgreSQL browser | 2 passed, including API restart and normal synthetic-account login/roles. |
+| Read-only HTTP browser | 2 passed. |
+| Controlled-mode HTTP browser | 2 passed; no active scope, no unlock/enrolment, server 409 and honest banner. |
+| Native/runtime | Host and Debian bridges compiled against actual headers; backend image built without SDK redistribution. Read-only inventory and current runtime checks recorded separately. |
+| Read-only preservation | Operation/confirmation hashes unchanged; account count unchanged; real ingestion continues; no write activation. |
+
+Continuation files: `.env.example`, `README.md`; `backend/app/config.py`, `controllers.py`, `hikvision.py`, `hikvision_writes.py`, `hikvision_control.py`, `jobs.py`, `operations.py`, `service.py`, `main.py`, `views.py`; `backend/native/hikvision_readonly.cpp`, `hikvision_permissions.h`; `backend/scripts/build_hikvision.py`; `backend/tests/test_hikvision_writes.py`; `frontend/src/models.ts`, `App.tsx`, `pages/Dashboard.tsx`, `pages/Administration.tsx`; `frontend/package.json`, `playwright.controlled.config.ts`, `tests/http-browser/controlled.spec.ts`; this report and `docs/hikvision-controlled-writes.md`. No migration or private credential change. Existing SDK exclusion/mounts and event checkpoints remain in place. No commit, push, publication or external deployment.
+
+
+Final connectivity refresh supersedes the earlier successful route/session checks: **both host and fresh backend-container TCP probes timed out**. Host `enp0s31f6` is DOWN with no configured address, and `ip route get 10.10.20.8` selects `via 10.10.10.1 dev wlp1s0 src 10.10.10.2`. The existing local API and PostgreSQL remain healthy; the worker reports FAILED/RECONNECT_WAIT instead of connected. No firewall, host route, interface or controller configuration was changed. Ethernet restoration and powered reconnect/history recovery remain owner-side acceptance. This is a changed host link/route condition, not evidence that container routing alone failed. The final event count remains 234. The existing running API remains the earlier read-only image; newly prepared code is built/tested separately and has not been activated or deployed.
+
+Two overlapping final test runs collided in the isolated `ift_test` fixtures and were discarded. The reported final backend result is from a subsequent single sequential run; the actual application database preservation check remained unchanged.

@@ -75,10 +75,13 @@ def build(container=False):
         "sourceSha256": hashlib.sha256(
             (ROOT / "backend/native/hikvision_readonly.cpp").read_bytes()
         ).hexdigest(),
+        "permissionsSourceSha256": hashlib.sha256(
+            (ROOT / "backend/native/hikvision_permissions.h").read_bytes()
+        ).hexdigest(),
     }
     (output.parent / "build.json").write_text(json.dumps(manifest, indent=2))
     print(
-        "Read-only bridge compiled against local SDK headers. No device connection or mutation performed."
+        "Bridge compiled against local SDK headers. No device connection or mutation performed."
     )
 
 

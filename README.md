@@ -1,6 +1,6 @@
 # IFT E-Library Access Control
 
-Phone-first React/TypeScript application connected to a durable FastAPI/PostgreSQL backend. Controller modes are explicit: `SIMULATED` for demonstrations and `HIKVISION_READ_ONLY` for native SDK reads with all physical writes blocked. The local official Linux SDK now initializes in both runtimes, and native login/history/live transport and PostgreSQL ingestion are implemented. **Real events now reach PostgreSQL and the frontend.** Host/container TCP, SDK login, device identity, history and real-time subscription are verified. Owner-confirmed swipes established Reader 1 EXIT and Reader 2 ENTRY on Door 1. Runtime assets, authentication, uploads, exports and jobs operate locally; internet access is needed for initial dependency/image installation.
+Phone-first React/TypeScript application connected to a durable FastAPI/PostgreSQL backend. Controller modes are explicit: `SIMULATED` for demonstrations, `HIKVISION_READ_ONLY` for native SDK reads with physical writes blocked, and `HIKVISION_CONTROLLED` for separately scoped test permissions. Controlled execution is implemented but remains blocked on this device pending complete resource-capacity evidence and designated test credentials. The current installation remains read-only. The local official Linux SDK now initializes in both runtimes, and native login/history/live transport and PostgreSQL ingestion are implemented. **Real events now reach PostgreSQL and the frontend.** Earlier host/container TCP, SDK login, device identity, history and real-time subscription succeeded. The final connectivity refresh found Ethernet DOWN and both probes timing out; the local services remain healthy and report reconnect wait. Owner-confirmed swipes established Reader 1 EXIT and Reader 2 ENTRY on Door 1. Runtime assets, authentication, uploads, exports and jobs operate locally; internet access is needed for initial dependency/image installation.
 
 ## Start locally with Docker Compose
 
@@ -73,7 +73,7 @@ The authenticated local operator must be an active Admin/Super Admin; Admin can 
 | `ALLOWED_ORIGINS` | Exact frontend origins allowed for CSRF-protected writes; include a chosen LAN development origin explicitly |
 | `UPLOAD_DIR`, `UPLOAD_LIMIT` | Private native upload directory and maximum bytes, default 5 MiB; relative directories resolve from the repository root |
 | `SESSION_HOURS` | Session lifetime, default 12 hours |
-| `CONTROLLER_MODE` | `SIMULATED` or `HIKVISION_READ_ONLY`; read-only mode never dispatches physical writes |
+| `CONTROLLER_MODE` | `SIMULATED`, `HIKVISION_READ_ONLY`, or `HIKVISION_CONTROLLED`; controlled mode also requires authenticated per-controller test activation |
 | `HIKVISION_*` | Private device credentials, SDK/bridge paths and bounded reads; see the capability guide |
 | `SIMULATION_CONTROLS_ENABLED` | Explicitly enables Super Admin-only failure/event controls |
 | `JOBS_ENABLED` | Native worker switch; Compose runs expiry/retention and durable operations jobs |
@@ -128,7 +128,7 @@ docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T b
 
 `compose.hikvision.yaml` mounts the original SDK and locally built bridge read-only. Vendor files never enter Git or the image. Initial container bridge compilation downloads a compiler into a disposable container; subsequent runtime operation stays local. Keep upstream notices; no redistribution permission is inferred from the included open-source notices.
 
-When the operator chooses to start the existing local container installation, use `docker compose -f compose.yaml -f compose.hikvision.yaml up -d backend` so the SDK mounts are present. This startup command was not executed here; the existing API remains stopped. The frontend continues to use HTTP mode and its normal local `/api` proxy. Native development uses the host bridge with the existing native startup command above.
+When the operator chooses to start the existing local container installation, use `docker compose -f compose.yaml -f compose.hikvision.yaml up -d backend` so the SDK mounts are present. The existing local backend was started with this override during the controlled-write preparation phase. It is healthy in `HIKVISION_READ_ONLY`; the existing HTTP frontend remains on port 5173. The frontend continues to use HTTP mode and its normal local `/api` proxy. Native development uses the host bridge with the existing native startup command above.
 
 Diagnostics do not store events. The normal backend worker uses the native session, commits real events and complete historical checkpoints atomically, backfills every two minutes with overlap, and deduplicates live/history delivery. To verify ingestion locally without starting the API or dispatching any outbox operations, first apply the additive migration and then run the bounded collector against the existing application database:
 
@@ -140,6 +140,25 @@ docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T b
 docker compose -f compose.yaml -f compose.hikvision.yaml run --rm --no-deps -T backend python -m app.hikvision_collect --seconds 120
 ```
 
-Choose the installation's existing backend runtime. The additive migration and bounded collectors were run against the existing application database and real events were persisted. The API service was not deployed or started persistently. Existing pending operations remain preserved and blocked. Login and event reads cannot synchronize card permissions. Unlock, enrolment, person/card/schedule/clock writes, reset and upgrade are unavailable. Existing simulated history remains labelled and there is no mock fallback.
+Choose the installation's existing backend runtime. The additive migration and bounded collectors were run against the existing application database and real events were persisted. The existing local API is now running in read-only mode. Existing pending operations remain preserved and blocked. Login and event reads cannot synchronize card permissions. Unlock, enrolment, person/card/schedule/clock writes, reset and upgrade are unavailable. Existing simulated history remains labelled and there is no mock fallback.
 
-See [SDK evidence, setup, recovery limits and physical acceptance](docs/hikvision-capabilities.md). Owner-confirmed exit at 15:54:13 and entry at 15:55:10 Africa/Lagos are stored with verified reader directions. Actual API responses containing real rows rendered successfully on phone and laptop using a temporary read-only browser snapshot harness; ordinary operator login into a running installation remains a separate check. The physical user's card has no local assignment, so the application correctly retains Unknown credential rather than inferring an owner from chat. A grant or swipe does not prove physical passage. No commit, push or deployment was performed.
+See [SDK evidence, setup, recovery limits and physical acceptance](docs/hikvision-capabilities.md). Owner-confirmed exit at 15:54:13 and entry at 15:55:10 Africa/Lagos are stored with verified reader directions. Actual API responses containing real rows rendered successfully on phone and laptop using a temporary read-only browser snapshot harness; ordinary operator login into the running local installation was subsequently recorded through the normal authentication endpoint. Role/CSRF/browser regression checks remain separately identified as isolated tests. The physical user's card has no local assignment, so the application correctly retains Unknown credential rather than inferring an owner from chat. A grant or swipe does not prove physical passage. No commit, push or deployment was performed.
+
+
+## Controlled card-access write preparation
+
+[Controlled-write setup and test sequence](docs/hikvision-controlled-writes.md) describes the authenticated local inventory/scope tool, per-controller operation review, native card/schedule primitives and readback safeguards. **No physical write was performed or enabled.** Four existing controller cards were read without importing them. Card-access week/group/holiday reads 1–64 and template reads 1–128 succeeded. Template indices 129–255 returned SDK error 11 through both sampled legacy and V50 getters, and ACS capability XML omits the template-count limit. Inventory therefore reports incomplete and activation refuses it. Weekday ordering also needs evidence; no SDK array interpretation is guessed.
+
+The owner chose to skip the powered Ethernet recovery check and did not identify spare test credentials. Keep `CONTROLLER_MODE=HIKVISION_READ_ONLY`. The native write functions and durable controlled executor are automated-test verified; issuance, blacklist/zero-rights disable, validity, weekly/holiday enforcement, visitor reuse and unrestricted-card behavior still require device write/readback and ordinary swipe acceptance with designated cards. Existing iVMS templates 1 and 2 and all unmanaged records remain untouched.
+
+```sh
+# Read-only inventory; output is a new ignored, mode-600 local file.
+env PYTHONPATH=backend backend/.venv/bin/python -m app.hikvision_control inventory \
+  --output backend/var/hikvision-inventory-review.json
+# Currently prints complete:false. Do not bypass the activation guard.
+# Additional isolated phone/laptop guard regression:
+cd frontend
+npm run test:controlled
+```
+
+Final connection refresh: Ethernet `enp0s31f6` is now DOWN and the controller route goes through Wi-Fi gateway `10.10.10.1`; both host/container probes timed out. The local API/database remain healthy, and the worker reports reconnect wait. There are 234 persisted real events. No network settings were changed; Ethernet restoration and physical recovery acceptance remain pending. The existing API continues its original read-only image; prepared write code was built/tested separately and remains unactivated.

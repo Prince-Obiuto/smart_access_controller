@@ -89,6 +89,7 @@ class AccessService:
         if not devices:
             raise DomainError("CONFLICT", "Configure a target controller first.")
         for device in devices:
+            scope = get_setting(self.db, "hikvision:write-scope:" + device.id)
             op = Operation(
                 controller_id=device.id,
                 target_type=target_type,
@@ -98,7 +99,15 @@ class AccessService:
                 status="PENDING",
                 actor_id=self.actor.id if self.actor else None,
                 created_at=self.at,
-                data=data or {},
+                data={
+                    **(data or {}),
+                    **(
+                        {"writeEpoch": scope["epoch"]}
+                        if self.settings.controller_mode == "HIKVISION_CONTROLLED"
+                        and scope.get("enabled")
+                        else {}
+                    ),
+                },
             )
             self.db.add(op)
             self.db.flush()
@@ -175,10 +184,16 @@ class AccessService:
             )
         )
         devices = list(self.db.scalars(select(Controller)))
+        from .hikvision_writes import physical_confirmation
+
         return len(confirmations) == len(devices) > 0 and all(
             c.desired == "DISABLED"
             and c.last_confirmed == "DISABLED"
             and c.state == "SYNCHRONIZED"
+            and (
+                self.settings.controller_mode == "SIMULATED"
+                or physical_confirmation(self.db, a, c)
+            )
             for c in confirmations
         )
 
@@ -205,6 +220,57 @@ class AccessService:
                 "CONFLICT",
                 "Card must be usable and confirmed disabled before assignment.",
             )
+        if (
+            card.kind == "VISITOR"
+            and self.settings.controller_mode == "HIKVISION_CONTROLLED"
+        ):
+            from .hikvision_writes import physical_confirmation
+
+            devices = list(self.db.scalars(select(Controller)))
+            for device in devices:
+                previous = self.db.scalar(
+                    select(Assignment)
+                    .where(Assignment.card_id == card.id)
+                    .order_by(Assignment.created_at.desc())
+                )
+                confirmation = (
+                    self.db.scalar(
+                        select(Confirmation).where(
+                            Confirmation.assignment_id == previous.id,
+                            Confirmation.controller_id == device.id,
+                        )
+                    )
+                    if previous
+                    else None
+                )
+                pool_op = self.db.scalar(
+                    select(Operation)
+                    .where(
+                        Operation.target_type == "POOL",
+                        Operation.target_id == card.id,
+                        Operation.controller_id == device.id,
+                    )
+                    .order_by(Operation.created_at.desc())
+                )
+                proven = (
+                    (
+                        confirmation
+                        and confirmation.last_confirmed == "DISABLED"
+                        and physical_confirmation(self.db, previous, confirmation)
+                    )
+                    if previous
+                    else (
+                        pool_op
+                        and pool_op.status == "CONFIRMED"
+                        and pool_op.data.get("simulated") is False
+                        and pool_op.data.get("readbackVerified")
+                    )
+                )
+                if not proven:
+                    raise DomainError(
+                        "CONFLICT",
+                        "Visitor card disable requires physical readback before reuse.",
+                    )
         if self.db.scalar(
             select(Assignment).where(
                 Assignment.state.in_(ACTIVE),
@@ -252,7 +318,11 @@ class AccessService:
                     "CONFLICT", "Previous credential removal remains unconfirmed."
                 )
             self.assignment_queue(a, "ENABLED")
-            self.message = "Activation remains pending until simulated confirmation."
+            self.message = (
+                "Activation remains pending until device readback."
+                if self.settings.controller_mode != "SIMULATED"
+                else "Activation remains pending until simulated confirmation."
+            )
             return
         card = self.db.scalar(select(Card).where(Card.number == number))
         if card and (
@@ -307,7 +377,11 @@ class AccessService:
         a = self.assign(p, card, p.start, p.expiry)
         app.assignment_id = a.id
         self.history(app, "ISSUANCE_PENDING")
-        self.message = "Activation remains pending until simulated confirmation."
+        self.message = (
+            "Activation remains pending until device readback."
+            if self.settings.controller_mode != "SIMULATED"
+            else "Activation remains pending until simulated confirmation."
+        )
 
     def execute(self, c):
         t = c["type"]
@@ -614,7 +688,7 @@ class AccessService:
             self.message = "Schedule saved — application to controllers is pending."
         elif t == "unlock":
             self.need("unlock")
-            if not self.settings.controller_writes_available:
+            if self.settings.controller_mode != "SIMULATED":
                 raise DomainError(
                     "NOT_CONNECTED", "Door commands unavailable in read-only mode.", 409
                 )
@@ -696,7 +770,9 @@ class AccessService:
             self.queue("POOL", card.id, "DISABLED", 1)
             target = card.id
             self.message = (
-                "Pool card awaits simulated disable confirmation before availability."
+                "Pool card awaits device disable readback before availability."
+                if self.settings.controller_mode != "SIMULATED"
+                else "Pool card awaits simulated disable confirmation before availability."
             )
         elif t == "designate":
             self.need("settings")
@@ -794,7 +870,7 @@ class AccessService:
     def simulation(self):
         self.need("settings")
         if (
-            not self.settings.controller_writes_available
+            self.settings.controller_mode != "SIMULATED"
             or not self.settings.simulation_controls_enabled
         ):
             raise DomainError(
@@ -862,4 +938,8 @@ class AccessService:
             self.queue(
                 "PRIVILEGE", card.id, "UPDATED", int(self.at.timestamp() * 1000000)
             )
-            self.message = "Unrestricted schedule pending simulated confirmation."
+            self.message = (
+                "Unrestricted test schedule awaits device readback."
+                if self.settings.controller_mode != "SIMULATED"
+                else "Unrestricted schedule pending simulated confirmation."
+            )

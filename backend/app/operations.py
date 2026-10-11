@@ -32,7 +32,7 @@ def target_operations(db, target_type, target_id, version):
     )
 
 
-def finalize_assignment(db, a, at):
+def finalize_assignment(db, a, at, settings=None):
     confirmations = list(
         db.scalars(select(Confirmation).where(Confirmation.assignment_id == a.id))
     )
@@ -44,6 +44,12 @@ def finalize_assignment(db, a, at):
         and c.version == a.version
         for c in confirmations
     )
+    if settings and settings.controller_mode == "HIKVISION_CONTROLLED":
+        from .hikvision_writes import physical_confirmation
+
+        all_confirmed = all_confirmed and all(
+            physical_confirmation(db, a, c) for c in confirmations
+        )
     a.sync = (
         "SYNCHRONIZED"
         if all_confirmed
@@ -83,7 +89,9 @@ def finalize_assignment(db, a, at):
             notify(
                 db,
                 "Card issued",
-                "Simulated activation confirmed. No physical hardware has been validated.",
+                "Controller activation verified by SDK readback."
+                if settings and settings.controller_mode == "HIKVISION_CONTROLLED"
+                else "Simulated activation confirmed. No physical hardware has been validated.",
                 "INFO",
                 a.person_id,
                 at,
@@ -99,6 +107,10 @@ def process_operations(db, settings, at=None, adapter=None):
     # An injected simulated adapter cannot bypass the configured hardware mode.
     if not settings.controller_writes_available:
         return
+    if settings.controller_mode == "HIKVISION_CONTROLLED":
+        from .hikvision_writes import process_controlled
+
+        return process_controlled(db, settings, at)
     at = at or now()
     adapter = adapter or adapter_for(settings)
     domain_lock(db)
@@ -388,7 +400,20 @@ def operation_result(db, result, settings=None):
             ],
             "operationIds": ids,
         }
-    statuses = {o.status for o in ops}
+    controlled = settings and settings.controller_mode == "HIKVISION_CONTROLLED"
+
+    def actual_status(o):
+        if (
+            controlled
+            and o.status == "CONFIRMED"
+            and not (
+                o.data.get("simulated") is False and o.data.get("readbackVerified")
+            )
+        ):
+            return "PENDING"
+        return o.status
+
+    statuses = {actual_status(o) for o in ops}
     status = (
         "UNCERTAIN"
         if "UNCERTAIN" in statuses
@@ -404,12 +429,16 @@ def operation_result(db, result, settings=None):
         (
             o.data.get("message")
             for o in ops
-            if o.status == status and o.data.get("message")
+            if actual_status(o) == status and o.data.get("message")
         ),
         result["message"],
     )
     if result.get("result") == status and result.get("confirmations"):
         message = result["message"]
+    if controlled and any(
+        o.status == "CONFIRMED" and actual_status(o) != "CONFIRMED" for o in ops
+    ):
+        message = "Prior simulated confirmation is not physical evidence; controller review required."
     return {
         "intendedState": ops[-1].desired,
         "result": status,
@@ -417,16 +446,16 @@ def operation_result(db, result, settings=None):
         "confirmations": [
             {
                 "controllerId": o.controller_id,
-                "confirmed": o.status == "CONFIRMED",
+                "confirmed": actual_status(o) == "CONFIRMED",
                 "state": "SYNCHRONIZED"
-                if o.status == "CONFIRMED"
+                if actual_status(o) == "CONFIRMED"
                 else "FAILED"
                 if o.status in ["FAILED", "UNCERTAIN"]
                 else "PENDING",
                 "intendedState": o.desired,
-                "at": iso(o.completed_at) if o.status == "CONFIRMED" else None,
+                "at": iso(o.completed_at) if actual_status(o) == "CONFIRMED" else None,
                 "lastConfirmedState": o.data.get("confirmedState"),
-                "simulated": True,
+                "simulated": o.data.get("simulated", True),
             }
             for o in ops
         ],

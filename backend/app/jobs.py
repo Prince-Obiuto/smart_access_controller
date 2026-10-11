@@ -97,7 +97,7 @@ def collect_real(database, settings, adapter, collect=False, at=None):
 
 def tick(database, settings, collect=False, at=None, adapter=None):
     adapter = adapter or adapter_for(settings)
-    if settings.controller_mode == "HIKVISION_READ_ONLY":
+    if settings.controller_mode != "SIMULATED":
         collect_real(database, settings, adapter, collect, at)
     with database.session() as db:
         domain_lock(db)
@@ -111,6 +111,8 @@ def tick(database, settings, collect=False, at=None, adapter=None):
                     "Controller event collection blocked; SDK transport unavailable."
                 )
         db.commit()
+        if settings.controller_mode == "HIKVISION_CONTROLLED":
+            return  # Independent writer below keeps revocation off history I/O.
         process_operations(db, settings, at)
         # Requests resumed by confirmed old removals produce new outbox rows.
         process_operations(db, settings, at)
@@ -120,6 +122,11 @@ async def worker(database, settings):
     adapter = adapter_for(settings)
     next_history = 0.0
     running = None
+    write_task = (
+        asyncio.create_task(write_worker(database, settings))
+        if settings.controller_mode == "HIKVISION_CONTROLLED"
+        else None
+    )
     try:
         while True:
             try:
@@ -145,5 +152,36 @@ async def worker(database, settings):
                 await running
             except Exception:
                 logger.error("Background job stopped with pending records retained.")
-        if settings.controller_mode == "HIKVISION_READ_ONLY":
+        if write_task:
+            write_task.cancel()
+            try:
+                await write_task
+            except asyncio.CancelledError:
+                pass
+        if settings.controller_mode != "SIMULATED":
             await asyncio.to_thread(close_real, database, settings, adapter)
+
+
+async def write_worker(database, settings):
+    running = None
+
+    def dispatch():
+        with database.session() as db:
+            process_operations(db, settings)
+
+    try:
+        while True:
+            running = asyncio.create_task(asyncio.to_thread(dispatch))
+            try:
+                await asyncio.shield(running)
+            except Exception:
+                logger.error(
+                    "Controller write failed; durable intent retained for reconciliation."
+                )
+            await asyncio.sleep(2)
+    finally:
+        if running and not running.done():
+            try:
+                await running
+            except Exception:
+                logger.error("Controller write shutdown retained uncertain intent.")

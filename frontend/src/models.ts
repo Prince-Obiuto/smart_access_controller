@@ -187,7 +187,9 @@ export interface DemoControls {
   unlockTimeout: boolean;
 }
 export interface Snapshot {
-  controllerMode?: "SIMULATED" | "HIKVISION_READ_ONLY";
+  controllerMode?: "SIMULATED" | "HIKVISION_READ_ONLY" | "HIKVISION_CONTROLLED";
+  controllerTestWritesEnabled?: boolean;
+  controllerWriteMessage?: string;
   controllerWritesAvailable?: boolean;
   controllerReadStatus?:
     "SIMULATED" | "BLOCKED" | "CONNECTED" | "CONNECTING" | "FAILED";

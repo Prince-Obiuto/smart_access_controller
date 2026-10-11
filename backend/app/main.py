@@ -201,7 +201,11 @@ def create_app(settings=None, database=None):
         response = operation_result(db, result, settings)
         if result.get("message", "").startswith("Replacement pending"):
             response["message"] = (
-                "Replacement issued with simulated activation confirmation."
+                (
+                    "Replacement activation verified by SDK readback."
+                    if settings.controller_mode == "HIKVISION_CONTROLLED"
+                    else "Replacement issued with simulated activation confirmation."
+                )
                 if application and application.state == "ISSUED"
                 else "Replacement pending: inspect old removal and activation confirmations."
             )
@@ -581,7 +585,7 @@ def create_app(settings=None, database=None):
     def scan_start(request: Request, db: DB):
         actor = actor_for(db, request, True)
         require(db, actor, "issue", settings)
-        if not settings.controller_writes_available:
+        if settings.controller_mode != "SIMULATED":
             raise DomainError(
                 "NOT_CONNECTED", "Enrolment unavailable in read-only mode.", 409
             )
@@ -597,7 +601,7 @@ def create_app(settings=None, database=None):
     @app.get("/api/enrolment-sessions/{id}")
     def scan_poll(id: str, request: Request, db: DB):
         actor = actor_for(db, request)
-        if not settings.controller_writes_available:
+        if settings.controller_mode != "SIMULATED":
             raise DomainError(
                 "NOT_CONNECTED",
                 "Simulated enrolment unavailable in read-only mode.",
@@ -614,7 +618,7 @@ def create_app(settings=None, database=None):
         id: str, action: Literal["confirm", "cancel"], request: Request, db: DB
     ):
         actor = actor_for(db, request, True)
-        if action == "confirm" and not settings.controller_writes_available:
+        if action == "confirm" and settings.controller_mode != "SIMULATED":
             raise DomainError(
                 "NOT_CONNECTED", "Enrolment unavailable in read-only mode.", 409
             )

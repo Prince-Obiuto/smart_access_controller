@@ -123,11 +123,14 @@ function Schedules() {
             }
           />
           <div className="button-row">
-            {data.controllerWritesAvailable !== false && (
+            {(data.controllerWritesAvailable !== false ||
+              data.controllerTestWritesEnabled) && (
               <Action
                 onClick={() => act({ type: "retry-sync", schedule: true })}
               >
-                Apply simulated schedule
+                {data.controllerTestWritesEnabled
+                  ? "Apply test card-access schedule"
+                  : "Apply simulated schedule"}
               </Action>
             )}
           </div>

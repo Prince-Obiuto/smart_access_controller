@@ -136,8 +136,11 @@ class NativeSession:
     normal thread. Events remain unacknowledged until the DB transaction commits.
     """
 
-    def __init__(self, settings):
+    def __init__(self, settings, *, permissions=False):
         self.settings = settings
+        self.permissions = permissions
+        self.permission_rows = []
+        self.permission_end = None
         self.process = None
         self.reader_thread = None
         self.messages = queue.Queue(maxsize=4096)
@@ -247,6 +250,19 @@ class NativeSession:
             )
         elif kind == "sdk":
             self.metadata["sdkVersionRaw"] = int(message["version"])
+        elif kind == "permissionAbi":
+            self.metadata["permissionAbi"] = {
+                key: int(message[key])
+                for key in [
+                    "cardV50",
+                    "cardCondition",
+                    "cardQuery",
+                    "week",
+                    "holiday",
+                    "group",
+                    "template",
+                ]
+            }
         elif kind == "deviceTime":
             try:
                 at = device_datetime(message["time"])
@@ -280,6 +296,13 @@ class NativeSession:
                 }
                 for node in root.iter()
                 if node.tag.split("}")[-1] in allow
+            }
+            # Retain the card/schedule subtree with its hierarchy and attributes;
+            # options are advertised limits, never proof of a successful write.
+            self.metadata["permissionCapabilities"] = {
+                node.tag.split("}")[-1]: ElementTree.tostring(node, encoding="unicode")
+                for node in root
+                if node.tag.split("}")[-1] in {"Card", "CardRightPlan"}
             }
             self.metadata["stages"]["capabilities"] = {
                 "status": "VERIFIED",
@@ -327,6 +350,13 @@ class NativeSession:
                 self.metadata["lastCommunication"] = datetime.now(
                     timezone.utc
                 ).isoformat()
+        elif kind == "permissionRow" and message.get("request") == self.sequence:
+            if len(self.permission_rows) >= 10000:
+                self.failure = "PERMISSION_INVENTORY_OVERFLOW"
+            else:
+                self.permission_rows.append(message["data"])
+        elif kind == "permissionEnd" and message.get("request") == self.sequence:
+            self.permission_end = message
 
     def pump(self, wait=0):
         try:
@@ -374,7 +404,8 @@ class NativeSession:
             self.metadata = {"state": "CONNECTING", "code": "CONNECTING", "stages": {}}
             try:
                 self.process = subprocess.Popen(
-                    [str(s.hikvision_bridge_path)],
+                    [str(s.hikvision_bridge_path)]
+                    + (["--permissions"] if self.permissions else []),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -467,6 +498,42 @@ class NativeSession:
                 self.close()
                 raise ControllerReadUnavailable("NATIVE_HEARTBEAT_TIMEOUT")
             return list(self.live)
+
+    def permission_request(self, name, fields=()):
+        if not self.permissions or name not in {
+            "CARD_READ",
+            "PLAN_READ",
+            "AUTHORIZE",
+            "CARD_WRITE",
+            "PLAN_WRITE",
+        }:
+            raise ControllerReadUnavailable("PERMISSION_CHANNEL_REQUIRED")
+        if (
+            name in {"AUTHORIZE", "CARD_WRITE", "PLAN_WRITE"}
+            and self.settings.controller_mode != "HIKVISION_CONTROLLED"
+        ):
+            raise ControllerReadUnavailable("READ_ONLY")
+        tokens = [str(v) for v in fields]
+        if any(not v or any(c.isspace() or c == "\0" for c in v) for v in tokens):
+            raise ControllerReadUnavailable("INVALID_PERMISSION_INPUT")
+        with self.lock:
+            self.start()
+            self.sequence += 1
+            self.permission_rows, self.permission_end = [], None
+            try:
+                self.process.stdin.write(
+                    (" ".join([name, str(self.sequence), *tokens]) + "\n").encode()
+                )
+                self.process.stdin.flush()
+                deadline = time.monotonic() + self.settings.hikvision_process_timeout
+                while self.permission_end is None and time.monotonic() < deadline:
+                    self.pump(0.1)
+                if self.permission_end is None:
+                    raise ControllerReadUnavailable("PERMISSION_TIMEOUT")
+                return self.permission_rows, self.permission_end
+            except (OSError, ControllerReadUnavailable):
+                self.close()
+                raise ControllerReadUnavailable("PERMISSION_UNCERTAIN") from None
 
     def acknowledge_live(self, count):
         for _ in range(count):

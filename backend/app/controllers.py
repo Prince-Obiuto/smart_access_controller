@@ -22,6 +22,7 @@ class HikvisionReadOnlyAdapter:
         self.settings = settings
         if settings is not None:
             from .hikvision import NativeSession
+
             self.session = NativeSession(settings)
         else:
             self.session = None
@@ -34,11 +35,13 @@ class HikvisionReadOnlyAdapter:
             raise ControllerReadUnavailable("SDK_TRANSPORT_UNAVAILABLE")
         if controller.id != self.settings.hikvision_controller_id:
             raise ControllerReadUnavailable("CONTROLLER_TARGET_NOT_CONFIGURED")
-        return self.session.read_history(start, end, self.settings.hikvision_event_limit)
+        return self.session.read_history(
+            start, end, self.settings.hikvision_event_limit
+        )
 
 
 def adapter_for(settings):
-    if settings.controller_mode == "HIKVISION_READ_ONLY":
+    if settings.controller_mode in {"HIKVISION_READ_ONLY", "HIKVISION_CONTROLLED"}:
         return HikvisionReadOnlyAdapter(settings)
     if settings.controller_mode == "SIMULATED":
         return SimulatedAdapter()

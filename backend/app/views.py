@@ -14,6 +14,7 @@ from .models import (
     NotificationRead,
     CalendarException,
     Schedule,
+    Operation,
 )
 from .common import iso, identity, name, get_setting, now
 from .security import capabilities
@@ -82,10 +83,28 @@ def confirmation_view(c, read_only=False):
     )
 
 
-def assignment_view(db, a, read_only=False):
+def assignment_view(db, a, read_only=False, settings=None):
     conf = list(
         db.scalars(select(Confirmation).where(Confirmation.assignment_id == a.id))
     )
+    controlled = settings and settings.controller_mode == "HIKVISION_CONTROLLED"
+    if controlled:
+        from .hikvision_writes import physical_confirmation
+
+        views = []
+        for c in conf:
+            real = physical_confirmation(db, a, c)
+            views.append({**confirmation_view(c, not real), "simulated": not real})
+        sync = (
+            a.sync
+            if views and all(c["confirmed"] for c in views)
+            else "FAILED"
+            if a.sync == "FAILED"
+            else "OUT_OF_SYNC"
+        )
+    else:
+        views = [confirmation_view(c, read_only) for c in conf]
+        sync = "OUT_OF_SYNC" if read_only else a.sync
     return clean(
         {
             "id": a.id,
@@ -94,8 +113,8 @@ def assignment_view(db, a, read_only=False):
             "start": iso(a.start),
             "expiry": iso(a.expiry),
             "state": a.state,
-            "sync": "OUT_OF_SYNC" if read_only else a.sync,
-            "confirmations": [confirmation_view(c, read_only) for c in conf],
+            "sync": sync,
+            "confirmations": views,
             "reason": a.reason,
             "returnedAt": iso(a.returned_at),
         }
@@ -214,7 +233,10 @@ def audit_view(a):
 
 
 def snapshot(db, actor, settings, at=None):
-    read_only = not settings.controller_writes_available
+    read_only = settings.controller_mode != "SIMULATED"
+    write_scope = get_setting(
+        db, "hikvision:write-scope:" + settings.hikvision_controller_id
+    )
     read_state = (
         get_setting(db, "hikvision:" + settings.hikvision_controller_id)
         if read_only
@@ -301,17 +323,79 @@ def snapshot(db, actor, settings, at=None):
     schedule = db.get(Schedule, "normal")
     payment = get_setting(db, "payment")
     designated = db.scalar(select(Card).where(Card.privileged == True))
+    assignment_views = [
+        assignment_view(db, a, read_only, settings) for a in assignments
+    ]
+    real_designation = False
+    if settings.controller_mode == "HIKVISION_CONTROLLED" and designated:
+        latest = db.scalar(
+            select(Operation)
+            .where(
+                Operation.target_type == "PRIVILEGE",
+                Operation.target_id == designated.id,
+            )
+            .order_by(Operation.created_at.desc())
+            .limit(1)
+        )
+        group = (
+            list(
+                db.scalars(
+                    select(Operation).where(
+                        Operation.target_type == "PRIVILEGE",
+                        Operation.target_id == designated.id,
+                        Operation.version == latest.version,
+                    )
+                )
+            )
+            if latest
+            else []
+        )
+        real_designation = (
+            bool(group)
+            and len(group) == len(list(db.scalars(select(Controller))))
+            and all(
+                o.status == "CONFIRMED"
+                and o.data.get("simulated") is False
+                and o.data.get("readbackVerified")
+                for o in group
+            )
+        )
+
+    def person_sync(p):
+        if not read_only:
+            return p.sync
+        own = [
+            a
+            for a in assignment_views
+            if a["personId"] == p.id and a["state"] in {"ACTIVE", "PENDING"}
+        ]
+        return (
+            p.sync
+            if settings.controller_mode == "HIKVISION_CONTROLLED"
+            and own
+            and all(a["sync"] == "SYNCHRONIZED" for a in own)
+            else "OUT_OF_SYNC"
+        )
+
     return {
         "identity": identity(db, actor),
-        "people": [
-            {**person_view(db, p), **({"sync": "OUT_OF_SYNC"} if read_only else {})}
-            for p in people
-        ],
+        "people": [{**person_view(db, p), "sync": person_sync(p)} for p in people],
         "cards": [
-            {**card_view(c), **({"privileged": False} if read_only else {})}
+            {
+                **card_view(c),
+                **(
+                    {
+                        "privileged": bool(
+                            real_designation and designated and c.id == designated.id
+                        )
+                    }
+                    if read_only
+                    else {}
+                ),
+            }
             for c in cards
         ],
-        "assignments": [assignment_view(db, a, read_only) for a in assignments],
+        "assignments": assignment_views,
         "applications": [app_view(db, a) for a in applications],
         "visits": [visit_view(v) for v in visits],
         "devices": devices,
@@ -330,7 +414,7 @@ def snapshot(db, actor, settings, at=None):
             **payment,
             **(
                 {"privilegedCardId": designated.id}
-                if designated and not read_only
+                if designated and (not read_only or real_designation)
                 else {}
             ),
         },
@@ -344,7 +428,15 @@ def snapshot(db, actor, settings, at=None):
         },
         "clock": iso(at or now()),
         "controllerMode": settings.controller_mode,
-        "controllerWritesAvailable": settings.controller_writes_available,
+        # Broad actions (unlock/enrolment) remain unavailable in both real modes.
+        "controllerWritesAvailable": settings.controller_mode == "SIMULATED",
+        "controllerTestWritesEnabled": settings.controller_mode
+        == "HIKVISION_CONTROLLED"
+        and bool(write_scope.get("enabled")),
+        "controllerWriteMessage": "Scoped test writes enabled; existing backlog held for individual review."
+        if settings.controller_mode == "HIKVISION_CONTROLLED"
+        and write_scope.get("enabled")
+        else "Physical writes blocked; no active test scope.",
         "controllerReadStatus": read_status if read_only else "SIMULATED",
         "controllerReadMessage": read_code if read_only else "SIMULATED",
         "controllerReaderMappingVerified": bool(

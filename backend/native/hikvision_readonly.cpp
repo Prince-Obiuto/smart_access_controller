@@ -15,6 +15,7 @@
 #include <sys/resource.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 using Clock = std::chrono::steady_clock;
 static volatile std::sig_atomic_t stopping = 0;
@@ -157,7 +158,9 @@ static void history(LONG user, std::istringstream &in, unsigned timeout_ms) {
         ",\"complete\":" + (complete ? "true" : "false") + ",\"error\":" + std::to_string(error) +
         ",\"count\":" + std::to_string(count) + "}");
 }
-int main() {
+#include "hikvision_permissions.h"
+int main(int argc, char **argv) {
+    const bool permissions = argc == 2 && std::string(argv[1]) == "--permissions";
     std::ios::sync_with_stdio(false); std::cin.tie(nullptr);
     struct rlimit core_limit{0, 0}; setrlimit(RLIMIT_CORE, &core_limit);
     std::signal(SIGTERM, stop_signal); std::signal(SIGINT, stop_signal);
@@ -180,6 +183,10 @@ int main() {
         status("cleanup", NET_DVR_Cleanup()); return 2;
     }
     status("initialize", true);
+    if (permissions) emit("{\"kind\":\"permissionAbi\",\"cardV50\":" + std::to_string(sizeof(NET_DVR_CARD_CFG_V50)) +
+        ",\"cardCondition\":" + std::to_string(sizeof(NET_DVR_CARD_CFG_COND)) + ",\"cardQuery\":" + std::to_string(sizeof(NET_DVR_CARD_CFG_SEND_DATA)) +
+        ",\"week\":" + std::to_string(sizeof(NET_DVR_WEEK_PLAN_CFG)) + ",\"holiday\":" + std::to_string(sizeof(NET_DVR_HOLIDAY_PLAN_CFG)) +
+        ",\"group\":" + std::to_string(sizeof(NET_DVR_HOLIDAY_GROUP_CFG)) + ",\"template\":" + std::to_string(sizeof(NET_DVR_PLAN_TEMPLATE)) + "}");
     emit("{\"kind\":\"sdk\",\"version\":" + std::to_string(NET_DVR_GetSDKBuildVersion()) + "}");
     unsigned timeout_ms = std::min(10000u, std::max(100u, static_cast<unsigned>(std::stoul(timeout))));
     NET_DVR_SetConnectTime(timeout_ms, 1); NET_DVR_SetRecvTimeOut(timeout_ms);
@@ -216,7 +223,7 @@ int main() {
     // Recovery comes from our durable history query, not offline alarm replay.
     NET_DVR_SETUPALARM_PARAM alarm{}; alarm.dwSize = sizeof(alarm); alarm.byLevel = 2; alarm.byDeployType = 1;
     LONG alarm_handle = -1;
-    if (NET_DVR_SetDVRMessageCallBack_V31(alarm_callback, nullptr) &&
+    if (!permissions && NET_DVR_SetDVRMessageCallBack_V31(alarm_callback, nullptr) &&
         NET_DVR_SetExceptionCallBack_V30(0, nullptr, exception_callback, nullptr))
     {
         alarm_handle = NET_DVR_SetupAlarmChan_V41(user, &alarm);
@@ -225,8 +232,10 @@ int main() {
             alarm_handle = NET_DVR_SetupAlarmChan_V41(user, &alarm);
         }
     }
-    status("subscription", alarm_handle >= 0, alarm_handle < 0 ? NET_DVR_GetLastError() : 0);
-    emit("{\"kind\":\"subscriptionMode\",\"deployType\":" + std::to_string(alarm.byDeployType) + "}");
+    if (!permissions) {
+        status("subscription", alarm_handle >= 0, alarm_handle < 0 ? NET_DVR_GetLastError() : 0);
+        emit("{\"kind\":\"subscriptionMode\",\"deployType\":" + std::to_string(alarm.byDeployType) + "}");
+    }
     emit("{\"kind\":\"ready\"}");
     auto heartbeat = Clock::now();
     while (!stopping) {
@@ -241,6 +250,7 @@ int main() {
             if (!std::getline(std::cin, line) || line == "QUIT") break;
             std::istringstream command(line); std::string name; command >> name;
             if (name == "HISTORY") history(user, command, std::max(10000u, timeout_ms * 3));
+            if (permissions) permission_command(user, name, command, timeout_ms);
         }
     }
     if (alarm_handle >= 0) status("unsubscribe", NET_DVR_CloseAlarmChan_V30(alarm_handle));
