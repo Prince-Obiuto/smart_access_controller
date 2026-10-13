@@ -3,6 +3,22 @@
 // commands follow Configure Access Permission Control Schedule (legacy getters).
 static std::mutex card_mutex;
 static std::array<NET_DVR_CARD_CFG_V50, 128> card_queue;
+#ifdef IFT_VALIDITY_EVIDENCE
+static std::array<DWORD, 128> card_lengths;
+static void validity_evidence(const NET_DVR_CARD_CFG_V50 &c, unsigned request, bool write, DWORD length) {
+    const BYTE *bytes = reinterpret_cast<const BYTE *>(&c.struValid);
+    const char *digits = "0123456789abcdef";
+    std::string hex;
+    for (size_t i = 0; i < sizeof(c.struValid); ++i) { hex += digits[bytes[i] >> 4]; hex += digits[bytes[i] & 15]; }
+    emit("{\"kind\":\"validityBytes\",\"request\":" + std::to_string(request) +
+         ",\"command\":" + std::to_string(write ? NET_DVR_SET_CARD_CFG_V50 : NET_DVR_GET_CARD_CFG_V50) +
+         ",\"direction\":" + quote(write ? "WRITE" : "READ") + ",\"card\":" + quote(text(c.byCardNo, ACS_CARD_NO_LEN)) +
+         ",\"nativeSize\":" + std::to_string(sizeof(c)) + ",\"declaredSize\":" + std::to_string(c.dwSize) +
+         ",\"callbackLength\":" + std::to_string(length) +
+         ",\"validityOffset\":" + std::to_string(offsetof(NET_DVR_CARD_CFG_V50, struValid)) +
+         ",\"validitySize\":" + std::to_string(sizeof(c.struValid)) + ",\"hex\":" + quote(hex) + "}");
+}
+#endif
 static size_t card_count = 0;
 static std::atomic<DWORD> card_status{0}, card_error{0};
 static std::atomic<bool> card_gap{false};
@@ -21,6 +37,9 @@ static void CALLBACK card_callback(DWORD type, void *buffer, DWORD length, void 
         std::unique_lock<std::mutex> lock(card_mutex, std::try_to_lock);
         if (!lock.owns_lock() || card_count == card_queue.size()) { card_gap = true; return; }
         std::memcpy(&card_queue[card_count++], buffer, sizeof(NET_DVR_CARD_CFG_V50));
+#ifdef IFT_VALIDITY_EVIDENCE
+        card_lengths[card_count - 1] = length;
+#endif
     }
 }
 static std::string ex_time(const NET_DVR_TIME_EX &t) {
@@ -65,6 +84,9 @@ static void card_request(LONG user, unsigned request, const std::string &number,
     DWORD error = handle < 0 ? NET_DVR_GetLastError() : 0;
     if (handle < 0) { permission_end(request, "SDK_ERROR", error); return; }
     if (number != "ALL") {
+#ifdef IFT_VALIDITY_EVIDENCE
+        if (write) validity_evidence(*write, request, true, sizeof(*write));
+#endif
         NET_DVR_CARD_CFG_SEND_DATA send{}; send.dwSize = sizeof(send);
         std::memcpy(send.byCardNo, number.data(), number.size());
         if (!NET_DVR_SendRemoteConfig(handle, ENUM_ACS_SEND_DATA,
@@ -75,12 +97,22 @@ static void card_request(LONG user, unsigned request, const std::string &number,
     unsigned total = 0;
     do {
         std::array<NET_DVR_CARD_CFG_V50, 128> batch;
+#ifdef IFT_VALIDITY_EVIDENCE
+        std::array<DWORD, 128> lengths;
+#endif
         size_t count;
         { std::lock_guard<std::mutex> lock(card_mutex); count = card_count;
-          std::copy_n(card_queue.begin(), count, batch.begin()); card_count = 0; }
+          std::copy_n(card_queue.begin(), count, batch.begin());
+#ifdef IFT_VALIDITY_EVIDENCE
+          std::copy_n(card_lengths.begin(), count, lengths.begin());
+#endif
+          card_count = 0; }
         for (size_t i = 0; i < count; ++i) {
             if (++total > 10000) { card_gap = true; break; }
             emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + card_json(batch[i]) + "}");
+#ifdef IFT_VALIDITY_EVIDENCE
+            validity_evidence(batch[i], request, false, lengths[i]);
+#endif
         }
         if (error || card_gap || (card_status != 0 && card_status != NET_SDK_CALLBACK_STATUS_PROCESSING)) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -89,8 +121,12 @@ static void card_request(LONG user, unsigned request, const std::string &number,
     // Stop joins remote callbacks; drain the last in-transit records too.
     const size_t remaining = card_count;
     if (remaining + total > 10000) card_gap = true;
-    for (size_t i = 0; i < remaining && total < 10000; ++i, ++total)
+    for (size_t i = 0; i < remaining && total < 10000; ++i, ++total) {
         emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + card_json(card_queue[i]) + "}");
+#ifdef IFT_VALIDITY_EVIDENCE
+        validity_evidence(card_queue[i], request, false, card_lengths[i]);
+#endif
+    }
     if (!stopped) { if (!error) error = NET_DVR_GetLastError(); stopping = 1; }
     if (!error) error = card_error;
     permission_end(request, card_gap ? "CALLBACK_GAP" : error ? "SDK_ERROR" :

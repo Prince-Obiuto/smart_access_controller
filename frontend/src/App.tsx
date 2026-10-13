@@ -10,6 +10,7 @@ import {
   useNavigate,
 } from "react-router";
 import { service } from "./services";
+import { ServiceError } from "./services/accessControlService";
 import type { Command, Identity, Snapshot } from "./models";
 import { can, landing, type Capability } from "./permissions";
 import { Context } from "./context";
@@ -85,26 +86,60 @@ function Application() {
   const location = useLocation(),
     navigate = useNavigate(),
     drawerRef = useRef<HTMLDialogElement>(null);
+  const workspaceEpoch = useRef(0);
+  const pendingRefresh = useRef<{
+    epoch: number;
+    promise: Promise<void>;
+    again: boolean;
+  } | null>(null);
   const notify = useCallback(
     (message: string, error = false) => setToast({ message, error }),
     [],
   );
-  const refresh = useCallback(async () => {
-    try {
-      const s = await service.snapshot();
-      setData(s);
-      setIdentity((previous) =>
-        previous &&
-        (previous.role !== s.identity.role ||
-          previous.name !== s.identity.name ||
-          previous.email !== s.identity.email)
-          ? s.identity
-          : previous,
-      );
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
+  const refresh = useCallback(() => {
+    const epoch = workspaceEpoch.current;
+    // Poll/visibility notifications can overlap. Share one request per account
+    // generation, and never apply a response after an account/role change.
+    if (pendingRefresh.current?.epoch === epoch) {
+      pendingRefresh.current.again = true;
+      return pendingRefresh.current.promise;
     }
+    const pending = { epoch, promise: Promise.resolve(), again: false };
+    pendingRefresh.current = pending;
+    pending.promise = (async () => {
+      do {
+        pending.again = false;
+        try {
+          const s = await service.snapshot();
+          if (epoch !== workspaceEpoch.current) return;
+          setData(s);
+          setIdentity((previous) =>
+            previous &&
+            (previous.id !== s.identity.id ||
+              previous.personId !== s.identity.personId ||
+              previous.role !== s.identity.role ||
+              previous.name !== s.identity.name ||
+              previous.email !== s.identity.email)
+              ? s.identity
+              : previous,
+          );
+          setError("");
+        } catch (e) {
+          if (epoch !== workspaceEpoch.current) return;
+          if (e instanceof ServiceError && e.code === "UNAUTHENTICATED") {
+            setData(null);
+            setIdentity(null);
+            setError((e as Error).message);
+            return;
+          }
+          setError((e as Error).message);
+        }
+      } while (pending.again && epoch === workspaceEpoch.current);
+    })();
+    void pending.promise.finally(() => {
+      if (pendingRefresh.current === pending) pendingRefresh.current = null;
+    });
+    return pending.promise;
   }, []);
   useEffect(() => {
     service
@@ -117,14 +152,22 @@ function Application() {
       .then(setDemoIdentities)
       .catch(() => {});
   }, []);
+  const accountId = identity?.id;
+  const personId = identity?.personId;
+  const accountRole = identity?.role;
   useEffect(() => {
+    workspaceEpoch.current++;
     setData(null);
-    if (identity) {
+    if (accountId) {
       void service.demoIdentities().then(setDemoIdentities);
       void refresh();
-      return service.subscribe(() => void refresh());
+      const unsubscribe = service.subscribe(() => void refresh());
+      return () => {
+        workspaceEpoch.current++;
+        unsubscribe();
+      };
     }
-  }, [identity, refresh]);
+  }, [accountId, personId, accountRole, refresh]);
   useEffect(() => {
     setDrawer(false);
     document.title = `${modules.find((m) => m.path === location.pathname)?.label ?? "Welcome"} · IFT E-Library Access Control`;
@@ -359,7 +402,14 @@ function Application() {
             </div>
           )}
           <main className="main-content" id="main-content" tabIndex={-1}>
-            {error ? (
+            {error && data && (
+              <div role="alert" className="callout warning">
+                <h2>Unable to refresh workspace</h2>
+                <p>{error} Showing the last loaded workspace.</p>
+                <button onClick={() => void refresh()}>Retry</button>
+              </div>
+            )}
+            {error && !data ? (
               <div role="alert" className="callout warning">
                 <h2>Unable to load workspace</h2>
                 <p>{error}</p>

@@ -454,12 +454,44 @@ function Recovery() {
   );
 }
 export function Notifications() {
-  const { data, act } = useApp();
+  const { data, act, refresh, notify } = useApp();
+  const [markingAll, setMarkingAll] = useState(false);
+  const unread = data.notifications.filter((n) => !n.read);
+  async function markAllRead() {
+    setMarkingAll(true);
+    let marked = 0;
+    try {
+      for (const notice of unread) {
+        await service.execute({ type: "notice-read", id: notice.id });
+        marked++;
+      }
+      notify("All notifications marked as read.");
+    } catch (error) {
+      notify(
+        `${marked} notification${marked === 1 ? "" : "s"} marked as read. ${(error as Error).message}`,
+        true,
+      );
+    } finally {
+      try {
+        await refresh();
+      } finally {
+        setMarkingAll(false);
+      }
+    }
+  }
   return (
     <>
       <Heading
         title="Notifications"
         description="Security alerts and updates appropriate to your account."
+        action={
+          <Action
+            onClick={markAllRead}
+            disabled={markingAll || unread.length === 0}
+          >
+            Mark all as read
+          </Action>
+        }
       />
       <Panel title="In-app alerts">
         <div className="record-list">
@@ -476,7 +508,10 @@ export function Notifications() {
               {n.read ? (
                 <span className="muted">Read</span>
               ) : (
-                <Action onClick={() => act({ type: "notice-read", id: n.id })}>
+                <Action
+                  onClick={() => act({ type: "notice-read", id: n.id })}
+                  disabled={markingAll}
+                >
                   Mark read
                 </Action>
               )}

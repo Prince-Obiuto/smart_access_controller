@@ -306,9 +306,15 @@ export function Visitors() {
                 <Badge value={c.poolState!} />
                 <p>
                   Controller permission:{" "}
-                  {c.disabled
-                    ? "Confirmed disabled (simulated)"
-                    : "Enabled or removal unconfirmed"}
+                  {data.controllerWritesAvailable === false
+                    ? "Device disable unconfirmed — controller writes unavailable"
+                    : c.disabled
+                      ? data.controllerMode === "HIKVISION_CONTROLLED"
+                        ? c.poolState === "AVAILABLE_DISABLED"
+                          ? "Confirmed disabled (device readback)"
+                          : "Device disable pending or unconfirmed"
+                        : "Confirmed disabled (simulated)"
+                      : "Enabled or removal unconfirmed"}
                 </p>
                 <small>{c.id} · independent temporary assignments</small>
               </div>

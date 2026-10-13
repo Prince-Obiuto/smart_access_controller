@@ -174,29 +174,52 @@ export function Records({ family }: { family: "events" | "audits" }) {
   const { data, notify } = useApp(),
     [filters, setFilters] = useState<Filters>({}),
     [page, setPage] = useState(1),
-    [records, setRecords] = useState<Page<AccessEvent | Audit> | null>(null),
+    [response, setResponse] = useState<{
+      key: string;
+      value: Page<AccessEvent | Audit>;
+    } | null>(null),
     [error, setError] = useState(""),
-    [retry, setRetry] = useState(0),
-    [loading, setLoading] = useState(true);
+    [retry, setRetry] = useState(0);
+  const queryKey = JSON.stringify([family, filters, page]);
+  const records = response?.key === queryKey ? response.value : null;
   useEffect(() => {
     let live = true;
-    setLoading(true);
+    let inFlight = false;
+    let queued = false;
     setError("");
-    service
-      .records(family, { ...filters, page, pageSize: 15 })
-      .then((p) => {
-        if (live) setRecords(p);
-      })
-      .catch((e) => {
-        if (live) setError(e.message);
-      })
-      .finally(() => {
-        if (live) setLoading(false);
-      });
+    async function load() {
+      if (inFlight) {
+        queued = true;
+        return;
+      }
+      inFlight = true;
+      try {
+        const value = await service.records(family, {
+          ...filters,
+          page,
+          pageSize: 15,
+        });
+        if (live) {
+          setResponse({ key: queryKey, value });
+          setError("");
+        }
+      } catch (e) {
+        if (live) setError((e as Error).message);
+      } finally {
+        inFlight = false;
+        if (live && queued) {
+          queued = false;
+          void load();
+        }
+      }
+    }
+    void load();
+    const unsubscribe = service.subscribe(() => void load());
     return () => {
       live = false;
+      unsubscribe();
     };
-  }, [family, filters, page, retry, data.clock]);
+  }, [family, filters, page, retry, queryKey]);
   const fields =
     family === "events"
       ? [
@@ -327,12 +350,16 @@ export function Records({ family }: { family: "events" | "audits" }) {
           Clear filters
         </button>
       </details>
-      {error ? (
+      {error && (
         <div className="padded">
-          <p role="alert">{error}</p>
+          <p role="alert">
+            {error}
+            {records && " Showing the last loaded records."}
+          </p>
           <button onClick={() => setRetry((r) => r + 1)}>Retry</button>
         </div>
-      ) : loading ? (
+      )}
+      {!records && !error ? (
         <div className="empty" role="status">
           Loading records…
         </div>
@@ -416,9 +443,9 @@ export function Records({ family }: { family: "events" | "audits" }) {
             </tbody>
           </table>
         </div>
-      ) : (
+      ) : records ? (
         <Empty>No records match your filters.</Empty>
-      )}
+      ) : null}
       <div className="pagination">
         <span>
           {records?.total ?? 0} records · page {page}
