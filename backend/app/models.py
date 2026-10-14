@@ -1,16 +1,17 @@
 from datetime import datetime, timezone
 from uuid import uuid4
+
 from sqlalchemy import (
-    String,
-    Text,
+    JSON,
+    BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
-    Integer,
-    BigInteger,
-    JSON,
     Index,
-    CheckConstraint,
+    Integer,
+    String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -78,6 +79,16 @@ class AuthSession(Base):
     )
     csrf: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    account_id: Mapped[str] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Upload(Row, Base):

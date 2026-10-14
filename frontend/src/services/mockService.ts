@@ -29,6 +29,39 @@ const plus = (iso: string, days: number) =>
   new Date(Date.parse(iso) + days * day).toISOString();
 const copy = <T>(v: T): T => structuredClone(v);
 export class MockService implements AccessControlService {
+  async recoveryOptions() {
+    return {
+      available: false,
+      contact:
+        "Contact the IFT E-Library administrator. Email recovery requires the local backend.",
+    };
+  }
+  async requestPasswordReset(_email: string) {
+    return {
+      message:
+        "Email recovery is unavailable in the demo. Contact the administrator.",
+    };
+  }
+  async resetPassword(
+    _token: string,
+    _password: string,
+    _confirmation: string,
+  ): Promise<{ message: string }> {
+    throw new ServiceError(
+      "FORBIDDEN",
+      "Password recovery requires the local backend.",
+    );
+  }
+  async adminRecovery(
+    _personId: string,
+    _identityConfirmed: boolean,
+  ): Promise<{ message: string }> {
+    this.require("people");
+    throw new ServiceError(
+      "FORBIDDEN",
+      "Password recovery requires the local backend.",
+    );
+  }
   readonly mode = "mock" as const;
   private state = seed("2026-10-03T10:00:00.000Z");
   private identity: Identity | null = null;
@@ -854,7 +887,9 @@ export class MockService implements AccessControlService {
       case "visitor-request":
       case "visit": {
         if (c.type === "visitor-request") this.require("visitors");
-        const p = this.person(c.type === "visitor-request" ? c.personId : actor.personId);
+        const p = this.person(
+          c.type === "visitor-request" ? c.personId : actor.personId,
+        );
         if (p.type !== "VISITOR")
           throw new ServiceError(
             "FORBIDDEN",

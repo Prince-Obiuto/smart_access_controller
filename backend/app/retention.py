@@ -1,23 +1,26 @@
 from calendar import monthrange
 from datetime import timedelta
-from sqlalchemy import select, delete
+
+from sqlalchemy import delete, select
+
+from .common import audit, now
 from .models import (
-    Person,
-    Account,
-    AuthSession,
-    Assignment,
-    Visit,
-    Card,
-    Upload,
     AccessEvent,
+    Account,
+    Assignment,
     Audit,
-    Notification,
+    AuthSession,
+    Card,
     Enrolment,
     Idempotency,
     LoginAttempt,
+    Notification,
+    PasswordReset,
+    Person,
+    Upload,
+    Visit,
 )
-from .common import now, audit
-from .service import AccessService, ACTIVE
+from .service import ACTIVE, AccessService
 from .uploads import remove_upload
 
 
@@ -32,6 +35,7 @@ def months(value, count):
 
 def run_retention(db, settings, at=None):
     at = at or now()
+    db.execute(delete(PasswordReset).where(PasswordReset.expires_at <= at))
     service = AccessService(db, None, settings, at)
     for a in list(
         db.scalars(

@@ -15,6 +15,10 @@ import type { Command, Identity, Snapshot } from "./models";
 import { can, landing, type Capability } from "./permissions";
 import { Context } from "./context";
 import { Auth } from "./pages/Auth";
+import {
+  PasswordRecovery,
+  ContactAdministrator,
+} from "./pages/PasswordRecovery";
 import { Dashboard } from "./pages/Dashboard";
 import { MyAccess, Profile, Requests } from "./pages/Access";
 import { People, Visitors } from "./pages/PeopleVisitors";
@@ -219,6 +223,21 @@ function Application() {
         Loading IFT E-Library Access Control…
       </div>
     );
+  if (
+    location.pathname === "/reset-password" ||
+    location.pathname === "/forgot-password"
+  )
+    return (
+      <PasswordRecovery
+        key={location.key}
+        reset={location.pathname === "/reset-password"}
+        onReset={() => {
+          setIdentity(null);
+          setData(null);
+        }}
+      />
+    );
+  if (location.pathname === "/contact-admin") return <ContactAdministrator />;
   if (!identity)
     return (
       <>

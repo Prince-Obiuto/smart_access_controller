@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal
+
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -40,7 +41,7 @@ class ControllerSettings(BaseSettings):
 
 
 class Settings(ControllerSettings):
-    database_url: str
+    database_url: str = Field(repr=False)
     environment: str = "development"
     allow_insecure_dev_cookies: bool = False
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -50,9 +51,36 @@ class Settings(ControllerSettings):
     simulation_controls_enabled: bool = False
     jobs_enabled: bool = True
     permissions_path: Path = ROOT / "shared/permissions.json"
+    application_url: str = "http://localhost:5173"
+    recovery_contact: str = "Contact the IFT E-Library administrator in person."
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: SecretStr = SecretStr("")
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from: str = ""
+    smtp_security: Literal["STARTTLS", "TLS", "PLAIN"] = "STARTTLS"
 
     @model_validator(mode="after")
     def validate_runtime(self):
+        from urllib.parse import urlsplit
+
+        url = urlsplit(self.application_url)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or url.path not in {"", "/"}
+        ):
+            raise ValueError("APPLICATION_URL must be a trusted application origin.")
+        if self.environment != "development" and (
+            url.scheme != "https" or self.smtp_security == "PLAIN"
+        ):
+            raise ValueError(
+                "Recovery requires HTTPS and encrypted SMTP outside development."
+            )
         if not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("PostgreSQL with psycopg is required.")
         if self.environment != "development" and self.allow_insecure_dev_cookies:

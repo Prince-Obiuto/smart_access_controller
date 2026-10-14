@@ -1,13 +1,14 @@
 import re
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Union
+
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     create_model,
     field_validator,
-    StringConstraints,
     model_validator,
 )
 
@@ -68,6 +69,25 @@ class Login(StrictModel):
     password: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
         min_length=1, max_length=128
     )
+
+
+class RecoveryRequest(StrictModel):
+    email: str = Field(max_length=254)
+
+
+class RecoveryReset(StrictModel):
+    token: str = Field(min_length=1, max_length=128)
+    password: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
+        min_length=12, max_length=128
+    )
+    confirmation: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
+        min_length=12, max_length=128
+    )
+
+
+class AdminRecovery(StrictModel):
+    personId: str = Field(max_length=64)
+    identityConfirmed: bool
 
 
 class PersonData(StrictModel):
@@ -231,8 +251,14 @@ CommandTypes = [
         expiry=(str, ...),
     ),
     command("visitor-approve", id=(str, ...), note=(RequiredStr, ...)),
-    command("visitor-request", personId=(str, ...), purpose=(RequiredStr, ...),
-            host=(RequiredStr, ...), start=(str, ...), expiry=(str, ...)),
+    command(
+        "visitor-request",
+        personId=(str, ...),
+        purpose=(RequiredStr, ...),
+        host=(RequiredStr, ...),
+        start=(str, ...),
+        expiry=(str, ...),
+    ),
     command("visitor-assign", id=(str, ...), cardId=(str, ...)),
     command(
         "visitor-return",

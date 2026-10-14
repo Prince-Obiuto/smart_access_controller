@@ -2,16 +2,18 @@
 
 import argparse
 from getpass import getpass
-from sqlalchemy import select, delete
+
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
+from .common import audit, initialize, notify
 from .config import Settings
 from .db import Database, domain_lock
-from .models import Account, Person, AuthSession
-from .security import PASSWORDS, password_matches, DomainError
-from .schemas import Registration
-from .common import initialize, audit, notify
-from pydantic import ValidationError
-from sqlalchemy.exc import SQLAlchemyError
+from .models import Account, Person
 from .retention import run_retention
+from .schemas import Registration
+from .security import PASSWORDS, DomainError, password_matches
 
 
 def new_password():
@@ -93,8 +95,10 @@ def reset_password(db, settings, email, actor_email, actor_password, password, r
         raise DomainError(
             "VALIDATION_ERROR", "Strong password and a reset reason are required."
         )
-    target.password_hash = PASSWORDS.hash(password)
-    db.execute(delete(AuthSession).where(AuthSession.account_id == target.id))
+    from .password_recovery import consume, issue
+
+    token = issue(db, target, actor, "LOCAL_RECOVERY_INITIATED")
+    consume(db, token, password, password, actor)
     audit(
         db, actor, "LOCAL_PASSWORD_RESET", target.person_id, person_id=target.person_id
     )
@@ -108,6 +112,7 @@ def reset_password(db, settings, email, actor_email, actor_password, password, r
     db.commit()
     # The human reason is not copied into audit free text to avoid personal/secret
     # spill; audit records the explicit local reset and its authorized actor.
+    return target.id
 
 
 def main():
@@ -119,6 +124,9 @@ def main():
     reset = sub.add_parser("reset-password")
     reset.add_argument("--email", required=True)
     reset.add_argument("--actor-email", required=True)
+    operator = sub.add_parser("operator-recovery")
+    operator.add_argument("--email", required=True)
+    sub.add_parser("check-recovery-mail")
     sub.add_parser("retention")
     args = parser.parse_args()
     settings = Settings()
@@ -142,11 +150,98 @@ def main():
             print(
                 "First Super Admin created. No physical card privilege has been assigned."
             )
+        elif args.command == "check-recovery-mail":
+            import smtplib
+            import ssl
+
+            from . import mail
+            from .common import set_setting
+
+            if not mail.available(settings):
+                raise SystemExit("Configure SMTP_HOST and SMTP_FROM privately first.")
+            transport = (
+                smtplib.SMTP_SSL if settings.smtp_security == "TLS" else smtplib.SMTP
+            )
+            kwargs = (
+                {"context": ssl.create_default_context()}
+                if settings.smtp_security == "TLS"
+                else {}
+            )
+            try:
+                with transport(
+                    settings.smtp_host, settings.smtp_port, timeout=8, **kwargs
+                ) as client:
+                    if settings.smtp_security == "STARTTLS":
+                        client.starttls(context=ssl.create_default_context())
+                    if settings.smtp_username.get_secret_value():
+                        client.login(
+                            settings.smtp_username.get_secret_value(),
+                            settings.smtp_password.get_secret_value(),
+                        )
+                    client.noop()
+            except (OSError, smtplib.SMTPException):
+                raise SystemExit(
+                    "SMTP connection/authentication failed; no message sent or credentials printed."
+                ) from None
+            domain_lock(db)
+            set_setting(db, "recovery-delivery", {"failed": False})
+            db.commit()
+            print(
+                "SMTP connection verified; recovery enabled. Real inbox delivery remains unverified."
+            )
+        elif args.command == "operator-recovery":
+            import os
+            import sys
+
+            from .config import ROOT
+            from .password_recovery import consume, issue, notify_changed
+
+            # Physical OS ownership of private configuration is the trust boundary,
+            # not a public endpoint or a universal credential. Never accept pipes.
+            if (
+                not sys.stdin.isatty()
+                or os.stat(ROOT / ".env").st_uid != os.getuid()
+                or os.stat(ROOT / ".env").st_mode & 0o077
+            ):
+                raise SystemExit(
+                    "Use the local owner terminal with owner-only .env permissions."
+                )
+            p = db.scalar(
+                select(Person).where(Person.email == args.email.strip().lower())
+            )
+            target = (
+                db.scalar(select(Account).where(Account.person_id == p.id))
+                if p
+                else None
+            )
+            if not target or target.role != "SUPER_ADMIN":
+                raise SystemExit(
+                    "Local operator recovery is restricted to Super Admin."
+                )
+            if (
+                input(
+                    "Confirm the Super Admin identity in person; type IDENTITY VERIFIED: "
+                )
+                != "IDENTITY VERIFIED"
+            ):
+                raise SystemExit("Identity confirmation required.")
+            domain_lock(db)
+            token = issue(db, target, None, "LOCAL_OPERATOR_RECOVERY")
+            password = new_password()
+            consume(db, token, password, password)
+            db.commit()
+            notify_changed(database, settings, target.id)
+            print("Super Admin recovery audited; sessions revoked. Sign in normally.")
         elif args.command == "reset-password":
             actor_password = getpass("Local operator password: ")
+            if (
+                input("Type IDENTITY VERIFIED after confirming the target in person: ")
+                != "IDENTITY VERIFIED"
+            ):
+                raise SystemExit("Identity confirmation required.")
             reason = input("Local reset reason (not a secret): ")
             password = new_password()
-            reset_password(
+            target_id = reset_password(
                 db,
                 settings,
                 args.email,
@@ -155,6 +250,9 @@ def main():
                 password,
                 reason,
             )
+            from .password_recovery import notify_changed
+
+            notify_changed(database, settings, target_id)
             print("Password reset audited; existing sessions revoked.")
         else:
             domain_lock(db)

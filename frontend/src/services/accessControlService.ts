@@ -16,7 +16,10 @@ export type ErrorCode =
   | "CONFLICT"
   | "CONTROLLER_UNAVAILABLE"
   | "UNAUTHENTICATED"
-  | "NOT_CONNECTED";
+  | "NOT_CONNECTED"
+  | "INVALID_RESET"
+  | "RATE_LIMITED"
+  | "DELIVERY_UNAVAILABLE";
 export class ServiceError extends Error {
   constructor(
     public code: ErrorCode,
@@ -32,6 +35,17 @@ export interface AccessControlService {
   currentIdentity(): Promise<Identity | null>;
   login(email: string, password: string): Promise<Identity>;
   logout(): Promise<void>;
+  recoveryOptions(): Promise<{ available: boolean; contact: string }>;
+  requestPasswordReset(email: string): Promise<{ message: string }>;
+  resetPassword(
+    token: string,
+    password: string,
+    confirmation: string,
+  ): Promise<{ message: string }>;
+  adminRecovery(
+    personId: string,
+    identityConfirmed: boolean,
+  ): Promise<{ message: string }>;
   register(data: Registration): Promise<Identity>;
   demoIdentities(): Promise<Identity[]>;
   selectDemo(id: string): Promise<Identity>;

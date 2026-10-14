@@ -83,6 +83,12 @@ export function createHttpService(baseUrl: string): AccessControlService {
   }
   return {
     mode: "http",
+    recoveryOptions: () => request("/auth/recovery-options"),
+    requestPasswordReset: (email) => write("/auth/forgot-password", { email }),
+    resetPassword: (token, password, confirmation) =>
+      write("/auth/reset-password", { token, password, confirmation }),
+    adminRecovery: (personId, identityConfirmed) =>
+      write("/auth/admin-recovery", { personId, identityConfirmed }),
     currentIdentity: () => request<Identity | null>("/auth/me"),
     login: (email, password) =>
       write<Identity>("/auth/login", { email, password }),

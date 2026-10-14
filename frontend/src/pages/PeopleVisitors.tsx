@@ -17,6 +17,8 @@ export function People() {
   const { data, act } = useApp(),
     [search, setSearch] = useState(""),
     [edit, setEdit] = useState<Person | "new" | null>(null);
+  const [recover, setRecover] = useState<Person | null>(null);
+  const [recoveryMessage, setRecoveryMessage] = useState("");
   const people = data.people.filter((p) =>
     `${p.firstName} ${p.lastName} ${p.reference} ${p.email}`
       .toLowerCase()
@@ -76,11 +78,22 @@ export function People() {
               </dl>
               <div className="button-row">
                 <button onClick={() => setEdit(p)}>Edit record</button>
+                {service.mode === "http" && p.accountRecoveryAllowed && (
+                  <button
+                    onClick={() => {
+                      setRecoveryMessage("");
+                      setRecover(p);
+                    }}
+                  >
+                    Account recovery
+                  </button>
+                )}
                 {p.sync !== "SYNCHRONIZED" && (
                   <Action
+                    disabled={!data.controllerWritesAvailable}
                     onClick={() => act({ type: "retry-sync", personId: p.id })}
                   >
-                    Confirm simulated date sync
+                    Request date synchronization
                   </Action>
                 )}
               </div>
@@ -106,6 +119,41 @@ export function People() {
         ))}
       </div>
       {!people.length && <Empty />}
+      {recoveryMessage && <p role="status">{recoveryMessage}</p>}
+      {recover && (
+        <Modal
+          title="Identity-verified account recovery"
+          onClose={() => setRecover(null)}
+        >
+          <p>
+            Confirm {recover.firstName} {recover.lastName}’s identity in person
+            before sending a single-use recovery link to their registered email.
+            Privileged accounts require Super Admin. No access permissions
+            change.
+          </p>
+          <FormFields
+            fields={[
+              {
+                name: "confirmed",
+                label: "Identity verification",
+                options: [
+                  { value: "NO", label: "Not yet verified" },
+                  { value: "YES", label: "Identity verified in person" },
+                ],
+              },
+            ]}
+            submit="Send recovery email"
+            onSubmit={async (d) => {
+              if (text(d, "confirmed") !== "YES")
+                throw new Error("Confirm identity before initiating recovery.");
+              setRecoveryMessage(
+                (await service.adminRecovery(recover.id, true)).message,
+              );
+              setRecover(null);
+            }}
+          />
+        </Modal>
+      )}
       {edit && (
         <Modal
           title={edit === "new" ? "Add ordinary person" : "Edit person"}
@@ -181,8 +229,14 @@ export function People() {
                   phone: text(d, "phone"),
                   department: text(d, "department"),
                   status: text(d, "status") as Person["status"],
-                  start: administrativeDate(text(d, "start"), edit === "new" ? undefined : edit.start),
-                  expiry: administrativeDate(text(d, "expiry"), edit === "new" ? undefined : edit.expiry),
+                  start: administrativeDate(
+                    text(d, "start"),
+                    edit === "new" ? undefined : edit.start,
+                  ),
+                  expiry: administrativeDate(
+                    text(d, "expiry"),
+                    edit === "new" ? undefined : edit.expiry,
+                  ),
                 },
               });
               setEdit(null);
@@ -204,7 +258,13 @@ export function Visitors() {
       <Heading
         title="Visitors"
         description="Individual visitor accounts. Reusable cards, safely returned."
-        action={service.mode === "http" && data.adminVisitorRequestAvailable ? <button className="primary" onClick={() => setRequestVisit(true)}>Request on behalf of visitor</button> : undefined}
+        action={
+          service.mode === "http" && data.adminVisitorRequestAvailable ? (
+            <button className="primary" onClick={() => setRequestVisit(true)}>
+              Request on behalf of visitor
+            </button>
+          ) : undefined
+        }
       />
       <div className="callout">
         An Exit swipe records departure only. Physical card return and confirmed
@@ -295,19 +355,60 @@ export function Visitors() {
         })}
       </div>
       {!data.visits.length && <Empty />}
-      {requestVisit && <Modal title="Request on behalf of visitor" onClose={() => setRequestVisit(false)}>
-        <p>This creates a request only. Record genuine external approval separately before assigning a card.</p>
-        <FormFields fields={[
-          {name: "personId", label: "Visitor", options: data.people.filter(p => p.type === "VISITOR" && p.status === "ACTIVE" && !p.accessEndedAt).map(p => ({value: p.id, label: p.firstName + " " + p.lastName}))},
-          {name: "purpose", label: "Purpose"}, {name: "host", label: "Host / department"},
-          {name: "start", label: "Start · Africa/Lagos", type: "datetime-local"},
-          {name: "expiry", label: "Expiry · Africa/Lagos", type: "datetime-local"},
-        ]} submit="Create request" onSubmit={async d => {
-          await act({type: "visitor-request", personId: text(d,"personId"), purpose: text(d,"purpose"), host: text(d,"host"),
-            start: text(d,"start") + ":00+01:00", expiry: text(d,"expiry") + ":00+01:00"});
-          setRequestVisit(false);
-        }} />
-      </Modal>}
+      {requestVisit && (
+        <Modal
+          title="Request on behalf of visitor"
+          onClose={() => setRequestVisit(false)}
+        >
+          <p>
+            This creates a request only. Record genuine external approval
+            separately before assigning a card.
+          </p>
+          <FormFields
+            fields={[
+              {
+                name: "personId",
+                label: "Visitor",
+                options: data.people
+                  .filter(
+                    (p) =>
+                      p.type === "VISITOR" &&
+                      p.status === "ACTIVE" &&
+                      !p.accessEndedAt,
+                  )
+                  .map((p) => ({
+                    value: p.id,
+                    label: p.firstName + " " + p.lastName,
+                  })),
+              },
+              { name: "purpose", label: "Purpose" },
+              { name: "host", label: "Host / department" },
+              {
+                name: "start",
+                label: "Start · Africa/Lagos",
+                type: "datetime-local",
+              },
+              {
+                name: "expiry",
+                label: "Expiry · Africa/Lagos",
+                type: "datetime-local",
+              },
+            ]}
+            submit="Create request"
+            onSubmit={async (d) => {
+              await act({
+                type: "visitor-request",
+                personId: text(d, "personId"),
+                purpose: text(d, "purpose"),
+                host: text(d, "host"),
+                start: text(d, "start") + ":00+01:00",
+                expiry: text(d, "expiry") + ":00+01:00",
+              });
+              setRequestVisit(false);
+            }}
+          />
+        </Modal>
+      )}
       <h2 className="section-title">Permanent visitor card pool</h2>
       <div className="record-grid">
         {data.cards

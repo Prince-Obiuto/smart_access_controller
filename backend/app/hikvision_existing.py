@@ -1,23 +1,41 @@
 """Individually reviewed normal-workflow card operations using unchanged TEMPLATE 3."""
 import argparse
-from datetime import datetime, timedelta
-from getpass import getpass
 import hashlib
 import json
 import os
 import struct
 import sys
+from datetime import datetime, timedelta
+from getpass import getpass
 from types import SimpleNamespace
 from uuid import uuid4
+
 from sqlalchemy import select
-from .common import now, iso, get_setting, set_setting, audit
+
+from .common import audit, get_setting, iso, now, set_setting
 from .config import Settings
 from .db import Database, domain_lock
-from .models import Operation, Card, Assignment, Application, Visit, Account, Person, AccessEvent
-from .security import login_account
 from .hikvision_card_diagnostic import Bridge, actor_for, save, verify_baseline
 from .hikvision_validity_probe import inspect
-from .hikvision_writes import WriteBlocked, card_matches, digest, scope_key, current_intent, process_controlled
+from .hikvision_writes import (
+    WriteBlocked,
+    card_matches,
+    current_intent,
+    digest,
+    process_controlled,
+    scope_key,
+)
+from .models import (
+    AccessEvent,
+    Account,
+    Application,
+    Assignment,
+    Card,
+    Operation,
+    Person,
+    Visit,
+)
+from .security import login_account
 
 BANNED = {"1051305927", "1052625607", "1050853895"}
 DEVICE = {"kind": "device", "model": "DS-K2802", "serial": "DS-K280220250625V020008ENGS6372431",
@@ -88,14 +106,19 @@ class ScopedBridge(Bridge):
         self.scope_cards = list(cards)
 
 
-def capture(settings, cards):
+def capture(settings, cards, binary=None):
     bridge = ScopedBridge(settings, cards)
+    bridge.reuse_binary = binary
+    bridge.keep_binary = binary is not None
     try:
         actual = bridge.start()
         actual["protected"] = {c["card"]: digest(c) for c in actual["cards"] if c["card"] not in cards}
         return bridge, actual
-    except Exception:
-        bridge.close(); raise
+    except Exception as exc:
+        bridge.close()
+        if isinstance(exc, WriteBlocked):
+            exc.artifact = save("normal-card-preflight-failed", {"code": str(exc), "native": bridge.rows, "writes": 0})
+        raise
 
 
 def expected_validity(intent):
@@ -128,6 +151,7 @@ class ExistingTemplateTransport:
     def __init__(self, settings, scope):
         self.settings, self.scope = settings, scope
         self.rows = []; self.last_raw = None; self.last_card = None; self.used_compatibility = False
+        self.binary = None
     def preflight(self):
         if self.scope.get("kind") != "EXISTING_TEMPLATE" or self.scope.get("existingTemplate") != 3:
             raise WriteBlocked("EXISTING_TEMPLATE_SCOPE_REQUIRED")
@@ -137,11 +161,18 @@ class ExistingTemplateTransport:
         library_hash = hashlib.sha256((self.settings.hikvision_sdk_dir / "lib/libhcnetsdk.so").read_bytes()).hexdigest()
         if self.scope["validityProfile"].get("librarySha256") != library_hash:
             raise WriteBlocked("MATCHING_SDK_LIBRARY_CHANGED")
-        bridge, actual = capture(self.settings, self.scope["cards"])
+        try:
+            bridge, actual = capture(self.settings, self.scope["cards"], self.binary)
+        except WriteBlocked as exc:
+            self.rows.append({"kind": "preflightFailure", "code": str(exc), "artifact": getattr(exc, "artifact", None)})
+            raise
         try:
             verify_baseline(actual, self.scope["baseline"])
         except Exception:
             bridge.close(); raise
+        if self.binary is None:
+            self.binary = bridge.binary
+            bridge.keep_binary = True
         return bridge, actual
     def start(self):
         b, _ = self.preflight(); b.close()
@@ -208,7 +239,10 @@ class ExistingTemplateTransport:
                 "validityCompatibilityApplied": self.used_compatibility,
                 "validityRawReadback": self.last_raw,
                 "artifact": save("normal-workflow-card", {"native": self.rows, "actualRecord": self.last_card})}
-    def close(self): pass
+    def close(self):
+        if self.binary:
+            self.binary.unlink(missing_ok=True)
+            self.binary = None
 
 
 def validity_profile(db, probe):
@@ -236,6 +270,24 @@ def validity_profile(db, probe):
             "artifact": probe["artifact"], "manufacturerSemanticsUnresolved": True}
 
 
+def verify_retained_paid(db, number, scope, record, raw):
+    """Closing execution may retain a genuinely issued paid entitlement, never a test visitor."""
+    if number in BANNED or scope.get("cards", {}).get(number, {}).get("kind") != "PERSONAL":
+        raise WriteBlocked("PAID_PERSONAL_CARD_REQUIRED")
+    card = db.scalar(select(Card).where(Card.number == number))
+    assignment = db.scalar(select(Assignment).where(Assignment.card_id == card.id, Assignment.ended_at.is_(None))) if card else None
+    application = db.scalar(select(Application).where(Application.assignment_id == assignment.id)) if assignment else None
+    if not card or card.revoked or card.disabled or card.privileged or card.ever_privileged or not assignment or assignment.state != "ACTIVE" or assignment.sync != "SYNCHRONIZED" or not application or application.state != "ISSUED" or not application.evidence_id or not application.reviewer_id:
+        raise WriteBlocked("PAID_ENTITLEMENT_NOT_CONFIRMED")
+    op = db.scalar(select(Operation).where(Operation.target_id == assignment.id, Operation.version == assignment.version, Operation.status == "CONFIRMED", Operation.controller_id == "controller-1"))
+    if not op or not op.data.get("readbackVerified") or op.id not in scope.get("reviewedOperations", []):
+        raise WriteBlocked("PAID_ENTITLEMENT_NOT_CONFIRMED")
+    intent = current_intent(db, op, scope, now())
+    if not compatible_match(record, intent, 3, scope["validityProfile"], raw):
+        raise WriteBlocked("PAID_ENTITLEMENT_READBACK_MISMATCH")
+    return {"card": number, "assignmentId": assignment.id, "operationId": op.id, "validity": {"start": intent["start"], "expiry": intent["expiry"]}}
+
+
 def main():
     os.umask(0o077)
     p = argparse.ArgumentParser(description=__doc__)
@@ -243,7 +295,7 @@ def main():
     sub.add_parser("activate").add_argument("--manifest", required=True)
     sub.add_parser("review").add_argument("--operation", required=True)
     sub.add_parser("run").add_argument("--operation", required=True)
-    sub.add_parser("close")
+    sub.add_parser("close").add_argument("--retain-paid-card")
     args = p.parse_args(); settings = Settings(); database = Database(settings)
     key = scope_key(settings.hikvision_controller_id)
     try:
@@ -281,12 +333,22 @@ def main():
                     set_setting(db,key,scope); audit(db,actor,"EXISTING_OPERATION_REVIEW",op.id); db.commit()
                     print(json.dumps({"operationId": op.id, "intent": current_intent(db,op,scope,now()), "controllerWrites": 0}))
                 elif args.command == "close":
-                    transport=ExistingTemplateTransport(settings,scope); transport.start()
-                    for number in scope["cards"]:
-                        if not card_matches(transport.read_card(number), {"card": number,"enabled":False}):
-                            raise WriteBlocked("CLEANUP_NOT_CONFIRMED")
-                    set_setting(db,key,{**scope,"enabled":False});audit(db,actor,"EXISTING_SCOPE_CLOSED","TEMPLATE:3");db.commit()
-                    print("Scope closed after unchanged protected baselines and inactive test-card GETs.")
+                    transport=ExistingTemplateTransport(settings,scope)
+                    try:
+                        transport.start()
+                        retained = []
+                        if args.retain_paid_card and args.retain_paid_card not in scope["cards"]:
+                            raise WriteBlocked("CARD_OUTSIDE_DESIGNATED_SCOPE")
+                        for number in scope["cards"]:
+                            record = transport.read_card(number)
+                            if number == args.retain_paid_card:
+                                retained.append(verify_retained_paid(db, number, scope, record, transport.last_raw))
+                            elif not card_matches(record, {"card": number,"enabled":False}):
+                                raise WriteBlocked("CLEANUP_NOT_CONFIRMED")
+                        set_setting(db,key,{**scope,"enabled":False,"retainedPaidEntitlements":retained});audit(db,actor,"EXISTING_SCOPE_CLOSED","TEMPLATE:3");db.commit()
+                        print("Write scope closed after protected readback checks; verified paid entitlement retained." if retained else "Scope closed after unchanged protected baselines and inactive test-card GETs.")
+                    finally:
+                        transport.close()
                 else:
                     db.rollback()
                     process_controlled(db, settings.model_copy(update={"controller_mode":"HIKVISION_CONTROLLED"}), operation_id=args.operation)

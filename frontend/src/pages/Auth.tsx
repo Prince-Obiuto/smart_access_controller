@@ -161,6 +161,8 @@ export function Auth({
             </p>
           ) : (
             <p>
+              <Link to="/forgot-password">Forgot password?</Link>
+              <br />
               New here? <Link to="/register">Student / staff registration</Link>
               <br />
               Visiting the library?{" "}
@@ -206,8 +208,7 @@ export function Auth({
           {service.mode === "http" && (
             <div className="callout warning">
               Connection uses the local backend and server-side sessions.
-              Controller operations remain simulated. See the documented
-              contract.
+              Physical access is separately confirmed by the controller.
             </div>
           )}
           {error && (

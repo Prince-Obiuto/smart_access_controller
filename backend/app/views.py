@@ -1,22 +1,24 @@
 from sqlalchemy import select
+
+from .common import get_setting, identity, iso, name, now
 from .models import (
-    Person,
-    Upload,
-    Card,
-    Assignment,
+    Account,
     Application,
-    ReviewHistory,
-    Visit,
+    Assignment,
+    CalendarException,
+    Card,
+    Confirmation,
     Controller,
     Door,
-    Confirmation,
     Notification,
     NotificationRead,
-    CalendarException,
-    Schedule,
     Operation,
+    Person,
+    ReviewHistory,
+    Schedule,
+    Upload,
+    Visit,
 )
-from .common import iso, identity, name, get_setting, now
 from .security import capabilities
 
 
@@ -379,7 +381,27 @@ def snapshot(db, actor, settings, at=None):
 
     return {
         "identity": identity(db, actor),
-        "people": [{**person_view(db, p), "sync": person_sync(p)} for p in people],
+        "people": [
+            {
+                **person_view(db, p),
+                "sync": person_sync(p),
+                "accountRecoveryAllowed": actor.role in {"ADMIN", "SUPER_ADMIN"}
+                and p.status == "ACTIVE"
+                and not p.purged
+                and not p.deleted_at
+                and bool(
+                    db.scalar(
+                        select(Account.id).where(
+                            Account.person_id == p.id,
+                            True
+                            if actor.role == "SUPER_ADMIN"
+                            else Account.role == "USER",
+                        )
+                    )
+                ),
+            }
+            for p in people
+        ],
         "cards": [
             {
                 **card_view(c),

@@ -41,11 +41,22 @@ services:
       SIMULATION_CONTROLS_ENABLED: ${SIMULATION_CONTROLS_ENABLED:-false}
       UPLOAD_LIMIT: ${UPLOAD_LIMIT:-5242880}
       SESSION_HOURS: ${SESSION_HOURS:-12}
+      APPLICATION_URL: ${APPLICATION_URL:-http://localhost:5173}
+      RECOVERY_CONTACT: ${RECOVERY_CONTACT:-Contact the IFT E-Library administrator in person.}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-STARTTLS}
       JOBS_ENABLED: ${JOBS_ENABLED:-true}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - uploads:/data/uploads
+      # Local development migrations stay current across an owner PC reboot.
+      - ./backend/alembic/versions:/app/backend/alembic/versions:ro
+      - ./backend/app:/app/backend/app:ro
     depends_on:
       db:
         condition: service_healthy

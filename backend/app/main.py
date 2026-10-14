@@ -2,60 +2,73 @@ import asyncio
 import hashlib
 import json
 import secrets
+import time
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from typing import Annotated, Literal
 from uuid import uuid4
+
 from fastapi import (
-    FastAPI,
+    BackgroundTasks,
     Depends,
-    Request,
-    Response,
-    UploadFile,
+    FastAPI,
     File,
     Form,
     HTTPException,
+    Request,
+    Response,
+    UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
-from starlette.responses import JSONResponse, FileResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from starlette.responses import FileResponse, JSONResponse
+
+from . import password_recovery as recovery_password
+from .common import audit, get_setting, identity, initialize, iso, now
 from .config import Settings
 from .db import Database, domain_lock
+from .enrolment import confirm_real, poll_real, start_real
+from .jobs import worker
 from .models import (
-    Person,
+    AccessEvent,
     Account,
     Application,
+    Audit,
+    Enrolment,
+    Idempotency,
+    Person,
     ReviewHistory,
     Upload,
-    AccessEvent,
-    Audit,
-    Idempotency,
-    Enrolment,
 )
-from .schemas import Registration, Login, CommandUnion, Filters
+from .operations import operation_result, process_operations
+from .records import export_records, list_records
+from .retention import run_retention
+from .schemas import (
+    AdminRecovery,
+    CommandUnion,
+    Filters,
+    Login,
+    RecoveryRequest,
+    RecoveryReset,
+    Registration,
+)
 from .security import (
-    DomainError,
     COOKIE,
     PASSWORDS,
+    DomainError,
     active_account,
-    session_for,
-    create_session,
-    set_cookie,
     check_csrf,
+    create_session,
     login_account,
     require,
+    session_for,
+    set_cookie,
 )
-from .common import initialize, identity, audit, get_setting, now, iso
-from .views import snapshot, person_view, event_view, audit_view
 from .service import AccessService
-from .operations import process_operations, operation_result
-from .uploads import save_upload, remove_upload
-from .records import list_records, export_records
-from .retention import run_retention
-from .jobs import worker
-from .enrolment import start_real, poll_real, confirm_real
+from .uploads import remove_upload, save_upload
+from .views import audit_view, event_view, person_view, snapshot
 
 
 class BodyLimit:
@@ -130,7 +143,7 @@ def create_app(settings=None, database=None):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
-        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.exception_handler(DomainError)
@@ -255,6 +268,103 @@ def create_app(settings=None, database=None):
         db.commit()
         set_cookie(response, token, settings)
         return identity(db, account)
+
+    @app.get("/api/auth/recovery-options")
+    def recovery_options(db: DB):
+        return {
+            "available": recovery_password.delivery_available(db, settings),
+            "contact": settings.recovery_contact,
+        }
+
+    @app.post("/api/auth/forgot-password")
+    def forgot_password(
+        body: RecoveryRequest, request: Request, tasks: BackgroundTasks, db: DB
+    ):
+        response_at = time.monotonic() + 0.25
+        check_csrf(db, request, settings)
+        domain_lock(db)
+        address = body.email.strip().lower()
+        ip = request.client.host if request.client else "local"
+        ip_ok = recovery_password.throttle(db, "request-ip|" + ip, 20)
+        email_ok = ip_ok and recovery_password.throttle(
+            db, "request-email|" + address, 3
+        )
+        available = recovery_password.delivery_available(db, settings)
+        if available and ip_ok and email_ok:
+            person = db.scalar(select(Person).where(Person.email == address))
+            account = (
+                db.scalar(select(Account).where(Account.person_id == person.id))
+                if person
+                else None
+            )
+            if recovery_password.eligible(db, account):
+                token = recovery_password.issue(db, account)
+                tasks.add_task(
+                    recovery_password.deliver, database, settings, account.id, token
+                )
+        db.commit()
+        time.sleep(max(0, response_at - time.monotonic()))
+        return {
+            "message": recovery_password.REQUEST_MESSAGE
+            if available
+            else recovery_password.UNAVAILABLE_MESSAGE
+        }
+
+    @app.post("/api/auth/reset-password")
+    def reset_password(
+        body: RecoveryReset,
+        request: Request,
+        response: Response,
+        tasks: BackgroundTasks,
+        db: DB,
+    ):
+        check_csrf(db, request, settings)
+        domain_lock(db)
+        ip = request.client.host if request.client else "local"
+        ip_ok = recovery_password.throttle(db, "attempt-ip|" + ip, 30)
+        token_ok = ip_ok and recovery_password.throttle(
+            db, "attempt-token|" + body.token, 10
+        )
+        db.commit()  # Failed attempts survive subsequent validation rollback.
+        if not ip_ok or not token_ok:
+            raise DomainError(
+                "RATE_LIMITED",
+                "Too many recovery attempts. Try again in 20 minutes.",
+                429,
+            )
+        account_id = recovery_password.consume(
+            db, body.token, body.password, body.confirmation
+        )
+        db.commit()
+        response.delete_cookie(
+            COOKIE,
+            path="/api",
+            secure=settings.secure_cookie,
+            httponly=True,
+            samesite="lax",
+        )
+        tasks.add_task(recovery_password.notify_changed, database, settings, account_id)
+        return {"message": "Password changed. Sign in with your new password."}
+
+    @app.post("/api/auth/admin-recovery")
+    def admin_recovery(
+        body: AdminRecovery, request: Request, tasks: BackgroundTasks, db: DB
+    ):
+        actor = actor_for(db, request, True)
+        domain_lock(db)
+        target = db.scalar(select(Account).where(Account.person_id == body.personId))
+        recovery_password.authorize_admin(db, actor, target, body.identityConfirmed)
+        if not recovery_password.delivery_available(db, settings):
+            raise DomainError(
+                "DELIVERY_UNAVAILABLE", recovery_password.UNAVAILABLE_MESSAGE, 503
+            )
+        if not recovery_password.throttle(db, "admin-account|" + target.id, 3):
+            db.commit()
+            raise DomainError("RATE_LIMITED", "Try again in 20 minutes.", 429)
+        token = recovery_password.issue(db, target, actor, "ADMIN_RECOVERY_INITIATED")
+        db.commit()
+        tasks.add_task(recovery_password.deliver, database, settings, target.id, token)
+        return {"message": recovery_password.REQUEST_MESSAGE}
 
     @app.post("/api/auth/logout")
     def logout(request: Request, response: Response, db: DB):
@@ -590,7 +700,11 @@ def create_app(settings=None, database=None):
             domain_lock(db)
             scan = start_real(db, actor, settings)
         else:
-            scan = Enrolment(actor_id=actor.id, state="WAITING", expires_at=now() + timedelta(seconds=30))
+            scan = Enrolment(
+                actor_id=actor.id,
+                state="WAITING",
+                expires_at=now() + timedelta(seconds=30),
+            )
         db.add(scan)
         db.flush()
         audit(db, actor, "SCAN_STARTED", scan.id)
@@ -615,7 +729,11 @@ def create_app(settings=None, database=None):
     ):
         actor = actor_for(db, request, True)
         scan = scan_get(db, actor, id)
-        if action == "cancel" and scan.state not in {"WAITING", "DETECTED", "AMBIGUOUS"}:
+        if action == "cancel" and scan.state not in {
+            "WAITING",
+            "DETECTED",
+            "AMBIGUOUS",
+        }:
             return {"ok": True}
         if action == "confirm" and settings.controller_mode != "SIMULATED":
             confirm_real(db, scan)

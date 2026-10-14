@@ -117,6 +117,9 @@ int main() {
     complete = resource("WEEK", plan.dwWeekPlanNo, NET_DVR_GET_CARD_RIGHT_WEEK_PLAN, week);
     NET_DVR_DOOR_CFG door{};
     complete = resource("DOOR_CONFIG", 1, NET_DVR_GET_DOOR_CFG, door) && complete;
+#ifdef IFT_TIMED_UNLOCK
+    emit("{\"kind\":\"doorFields\",\"door\":1,\"openDuration\":" + std::to_string(door.byOpenDuration) + "}");
+#endif
     std::string days="[";
     for (unsigned d=0;d<MAX_DAYS;++d) { if(d)days+=',';days+='[';
         for(unsigned i=0;i<MAX_TIMESEGMENT_V30;++i){if(i)days+=',';days+=segment_json(week.struPlanCfg[d][i]);}days+=']'; }
@@ -136,6 +139,19 @@ int main() {
     emit("{\"kind\":\"ready\"}");
     std::string command;
     if (std::getline(std::cin,command) && command != "QUIT") {
+#ifdef IFT_TIMED_UNLOCK
+        // Firmware times a normal one-shot open. Never use always-open or a
+        // software close timer: a process crash must not leave the door open.
+        NET_DVR_DOOR_CFG current{}; current.dwSize=sizeof(current); DWORD count=0;
+        BOOL read=NET_DVR_GetDVRConfig(user,NET_DVR_GET_DOOR_CFG,1,&current,sizeof(current),&count);
+        if(command!="UNLOCK5" || !complete || !read || count!=sizeof(current) || current.dwSize!=sizeof(current) ||
+           std::memcmp(&current,&door,sizeof(current))!=0 || current.byOpenDuration!=5) {
+            emit("{\"kind\":\"unlockResult\",\"sent\":false,\"ok\":false,\"code\":\"DOOR_DURATION_OR_BASELINE_UNVERIFIED\"}");
+        } else {
+            BOOL ok=NET_DVR_ControlGateway(user,1,1); DWORD error=ok?0:NET_DVR_GetLastError();
+            emit("{\"kind\":\"unlockResult\",\"sent\":true,\"ok\":" + std::string(ok?"true":"false") + ",\"error\":" + std::to_string(error) + "}");
+        }
+#else
         std::istringstream parse(command); std::string name, card; unsigned enabled=0;
 #ifdef IFT_EXISTING_TEMPLATE
         if (parse >> name >> card && name=="READ") {
@@ -165,6 +181,7 @@ int main() {
         }
 #ifdef IFT_EXISTING_TEMPLATE
         }
+#endif
 #endif
     }
     bool logout = stage("logout", NET_DVR_Logout(user));

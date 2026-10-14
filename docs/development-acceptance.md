@@ -1,0 +1,33 @@
+# Development acceptance — 2026-10-14
+
+This table supersedes older dated preparation snapshots. Production work, baseline milestone commit and production branch remain deferred until required acceptance passes. READ_ONLY stays configured for the original collector and current API; manual card scopes review one designated normal-workflow operation at a time. No backlog drain, schedule/clock edits, reset or upgrade.
+
+| Check | Automated | Device readback | Owner physical/UI evidence |
+|---|---|---|---|
+| A issuance/revocation, B replacement | Existing workflow/diagnostic tests passed | A `1051305927`, B `1052625607` blacklist type 3 / every door right zero; protected in every subsequent baseline | Previous granted/denied tests preserved; permanently revoked, never reactivated |
+| Validity ABI/compatibility | Exact header ABI and strict/narrow matcher tests passed | V50 2708-byte and legacy 272-byte records agree; 52-byte validity/8-byte TIME_EX; raw flag mismatch retained | Original A before-start/grant/after-expiry observations retained; vendor flag semantics still unresolved |
+| Visitor 02 assignment and return | Normal approval/assignment/cleanup tests passed | V `1052815031` ordinary Door 1/TEMPLATE 3, 18:20–18:45 Oct13; return then confirmed blacklist/zero rights, AVAILABLE_DISABLED | Owner unassigned denial, after-close denial, frontend synchronized/confirmed and physical return; cleanup denial reported but not matched to a device event |
+| Normal paid issuance, Victor | Normal proof/review/eligibility/issuance workflow used | Operation `9a904da4-2816-4f63-ab8d-60fa6c9cbd9c` CONFIRMED, fresh readback of `1053990519`: ordinary Door 1/TEMPLATE 3; 13 Oct 00:00–31 Dec 23:59:59 Lagos. Protected baselines unchanged | Owner grant at 12:33; actual ENTRY at 12:33:05, person Victor. Application ISSUED; assignment ACTIVE/SYNCHRONIZED; owner UI confirmation requested |
+| Backend-stopped visitor expiry | Software tests passed | New Visitor 03 12:49–13:04 Oct14 REQUESTED; no fabricated approval or current permission | Awaiting genuine approval, assigned-card readback, granted swipe, stop of all APIs/jobs, expired denial and recovered original event |
+| Visitor reassignment/history | Software rules tested | Visitor 04 13:05–18:45 Oct14 REQUESTED; V remains disabled until next approved assignment | Pending Visitor03 return/confirmed disable, Visitor04 grant and historical-owner verification |
+| Active Hours boundary | Plan preserved and restrictions implemented | TEMPLATE 3/WEEK 3 unchanged; Oct13 V had open dates when post-18:30 event minor 7 denied | After-closing denial verified. Same current assigned card's before/after pair remains pending; do not substitute expiry/revocation denial |
+| Recovery and event deduplication | Previously passed; no repeat cable test | Real live/history collection continues with durable checkpoint | Previously owner-confirmed; Reader 1 ENTRY / Reader 2 EXIT retained |
+| Forgot password | 13 new isolated recovery tests plus 4 phone/laptop recovery checks passed; 39 frontend tests/build passed | No physical state changes | SMTP unconfigured. Victor designated for later real delivery |
+| Simulation cleanup | Exact `simulated=true` predicate and real-ID preservation verified | No controller call | 89 simulated rows privately archived and removed; all 587 real IDs present at cleanup retained. Real count continues increasing |
+| Designated Super Admin card | Existing role/designation/revocation software tested | No explicitly designated card/unrestricted template established | Pending owner-designated separate personal card and verified unrestricted plan; application role never grants unrestricted access |
+| Timed remote unlock | Separate matching-header one-shot path prepared; no replay, five-second gate, durable UNCERTAIN | GET-only preflight: Door 1 configured **2 seconds**, required **5**. No door command sent | Requires resolution of duration policy/configuration and explicit observation of one permitted release; sensor/physical state UNKNOWN |
+| Schedule editing/calibration | Existing implementation retained | Total template capacity and full weekday ordering UNKNOWN | Blocked by authoritative references/independent weekday evidence; no WEEK/TEMPLATE/GROUP/HOLIDAY write |
+
+Original FAILED A/B writes remain FAILED in diagnostic history; later compatibility does not relabel them. Only exact device/firmware/header/library/ABI evidence permits zero returned begin/end flags while still comparing complete raw validity dates/reserved bytes, identity, card type, rights and template references. Manufacturer clarification remains required for firmware-vs-SDK normalization.
+
+Private evidence lives under ignored `backend/var/acceptance/card-diagnostic/`: `20261014-113153511882-normal-workflow-card.json`, `20261014-113638585293-paid-issuance-physical-evidence.json`, `20261014-113916370659-removed-simulation-events.json`, and `20261014-114536803414-timed-unlock-readonly-preflight.json`. Existing Oct13 visitor write/disable/raw mismatch artifacts remain preserved. Victor's execution scope was closed with `close --retain-paid-card 1053990519`, which requires genuine paid issuance plus fresh matching readback; it preserves his entitlement rather than revoking his approved card. Visitor scopes cannot use this exception.
+
+Current development UI: `http://localhost:5173`, proxy to READ_ONLY/jobs-disabled API on `127.0.0.1:8002`. Original Docker backend on 8000 owns collector/backfill. Isolated browser tests retain port 8001. Development API uses the existing private upload mirror; original referenced files were hash-verified. Keep the mirror until new uploads have been reconciled with original storage; do not delete it or switch upload paths blindly.
+
+Timed-unlock preparation command:
+
+```sh
+PYTHONPATH=backend backend/.venv/bin/python -m app.hikvision_unlock prepare
+```
+
+The matching SDK declares `NET_DVR_ControlGateway(user, gateway, state)`; the prepared path permits only Door 1/state 1 (ordinary open), never all doors, always-open, always-close or clock/config setters. It requires fresh complete Door 1 config readback and exact five-second firmware duration before execution. A second GET immediately before dispatch must equal the baseline. This PC's two-second duration fails that gate. No software timer or always-open fallback is used. An SDK acknowledgment would still leave physical state UNKNOWN until owner observation. [Official gateway command](https://open.hikvision.com/hardware/v2/%E6%8E%A5%E5%8F%A3%E5%AE%9A%E4%B9%89/NET_DVR_ControlGateway.html), [door-duration field](https://open.hikvision.com/hardware/structures/NET_DVR_DOOR_CFG.html).

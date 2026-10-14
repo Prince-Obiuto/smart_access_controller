@@ -4,26 +4,26 @@ Collector/outbox configuration is unchanged. This authenticated, short-lived
 diagnostic scope is separate from paid issuance and from general write scopes.
 """
 import argparse
-from datetime import datetime, timedelta
-from getpass import getpass
 import hashlib
 import json
 import os
-from pathlib import Path
 import select as io_select
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
+from getpass import getpass
 from types import SimpleNamespace
 from uuid import uuid4
 
 from sqlalchemy import select, text
-from .common import audit, get_setting, set_setting, now, iso, notify
-from .config import Settings, ROOT
+
+from .common import audit, get_setting, iso, notify, now, set_setting
+from .config import ROOT, Settings
 from .db import Database, domain_lock
-from .hikvision import LAGOS
-from .hikvision_writes import card_matches, digest, WriteBlocked
-from .models import Account, Card, Person, Operation, Assignment
+from .hikvision import LAGOS, error_code
+from .hikvision_writes import WriteBlocked, card_matches, digest
+from .models import Account, Assignment, Card, Operation, Person
 from .security import login_account
 
 CARDS = {"A": "1051305927", "B": "1052625607", "V": "1052815031"}
@@ -55,18 +55,31 @@ class Bridge:
         self.process = None
         self.rows = []
         self.binary = None
+        self.reuse_binary = None
+        self.keep_binary = False
 
     def start(self):
         s = self.settings
-        binary = ROOT_EVIDENCE / ("card-only-bridge-" + str(uuid4()))
+        binary = self.reuse_binary or ROOT_EVIDENCE / ("card-only-bridge-" + str(uuid4()))
         self.binary = binary
         header = s.hikvision_sdk_dir / "incEn/HCNetSDK.h"
         source = ROOT / "backend/native" / self.source_name
         ROOT_EVIDENCE.mkdir(mode=0o700, parents=True, exist_ok=True)
-        subprocess.run(["g++", "-std=c++17", "-O2", "-pthread", "-Wall", "-Wextra",
+        if self.reuse_binary:
+            if not binary.is_file():
+                raise WriteBlocked("NATIVE_BRIDGE_MISSING")
+        else:
+            try:
+                subprocess.run(["g++", "-std=c++17", "-O2", "-pthread", "-Wall", "-Wextra",
                         "-I", str(header.parent), str(source), "-L", str(s.hikvision_sdk_dir / "lib"),
                         "-Wl,-rpath-link," + str(s.hikvision_sdk_dir / "lib"), "-lhcnetsdk",
                         "-o", str(binary)], check=True, timeout=30, capture_output=True)
+            except subprocess.TimeoutExpired:
+                binary.unlink(missing_ok=True)
+                raise WriteBlocked("NATIVE_BRIDGE_BUILD_TIMEOUT") from None
+            except subprocess.CalledProcessError:
+                binary.unlink(missing_ok=True)
+                raise WriteBlocked("NATIVE_BRIDGE_BUILD_FAILED") from None
         binary.chmod(0o700)
         values = [s.hikvision_host, str(s.hikvision_port), s.hikvision_username.get_secret_value(),
                   s.hikvision_password.get_secret_value(), str(s.hikvision_sdk_dir / "lib")]
@@ -93,6 +106,9 @@ class Bridge:
             chunk = os.read(self.process.stdout.fileno(), 65536)
             if not chunk:
                 if until_ready:
+                    failures = [r for r in self.rows if r.get("error") and (r.get("ok") is False or r.get("code") == "SDK_ERROR")]
+                    if failures:
+                        raise WriteBlocked(error_code(failures[0]["error"]))
                     raise WriteBlocked("NATIVE_PREFLIGHT_FAILED")
                 return
             pending += chunk
@@ -127,7 +143,7 @@ class Bridge:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.process.kill(); self.process.wait()
-        if self.binary and (self.process is None or self.process.poll() is not None):
+        if self.binary and not self.keep_binary and (self.process is None or self.process.poll() is not None):
             self.binary.unlink(missing_ok=True)
             self.binary = None
 
