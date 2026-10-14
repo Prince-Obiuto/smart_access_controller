@@ -164,7 +164,7 @@ def test_pending_outbox_untouched_even_if_mock_adapter_injected(env, png):
     settings.controller_mode = "HIKVISION_READ_ONLY"
     response = cmd(admin, {"type": "issue", "id": aid, "number": "00000042"})
     assert response["result"] == "PENDING"
-    assert "writes unavailable" in response["message"]
+    assert "confirmation pending" in response["message"]
     assert all(not c["confirmed"] for c in response["confirmations"])
     with database.session() as db:
         before = [

@@ -13,6 +13,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from getpass import getpass
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -28,7 +29,7 @@ from .security import login_account
 
 CARDS = {"A": "1051305927", "B": "1052625607", "V": "1052815031"}
 KEY = "hikvision:card-diagnostic:controller-1"
-ROOT_EVIDENCE = ROOT / "backend/var/acceptance/card-diagnostic"
+ROOT_EVIDENCE = Path(os.environ.get("HIKVISION_EVIDENCE_DIR", str(ROOT / "backend/var/acceptance/card-diagnostic")))
 
 
 def save(label, value):
@@ -60,12 +61,16 @@ class Bridge:
 
     def start(self):
         s = self.settings
-        binary = self.reuse_binary or ROOT_EVIDENCE / ("card-only-bridge-" + str(uuid4()))
+        from .hikvision_binary import prebuilt
+        installed = prebuilt(s, self.source_name)
+        binary = self.reuse_binary or installed or ROOT_EVIDENCE / ("card-only-bridge-" + str(uuid4()))
+        if installed and binary == installed:
+            self.keep_binary = True
         self.binary = binary
         header = s.hikvision_sdk_dir / "incEn/HCNetSDK.h"
         source = ROOT / "backend/native" / self.source_name
         ROOT_EVIDENCE.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if self.reuse_binary:
+        if self.reuse_binary or installed:
             if not binary.is_file():
                 raise WriteBlocked("NATIVE_BRIDGE_MISSING")
         else:
@@ -80,7 +85,10 @@ class Bridge:
             except subprocess.CalledProcessError:
                 binary.unlink(missing_ok=True)
                 raise WriteBlocked("NATIVE_BRIDGE_BUILD_FAILED") from None
-        binary.chmod(0o700)
+            except FileNotFoundError:
+                raise WriteBlocked("NATIVE_COMPILER_OR_PREBUILT_MISSING") from None
+        if binary != installed:
+            binary.chmod(0o700)
         values = [s.hikvision_host, str(s.hikvision_port), s.hikvision_username.get_secret_value(),
                   s.hikvision_password.get_secret_value(), str(s.hikvision_sdk_dir / "lib")]
         if hasattr(self, "scope_cards"):

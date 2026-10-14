@@ -18,7 +18,7 @@ test("read-only blocked state is honest and offers no door writes", async ({
   ).toBeVisible();
   await expect(
     page.getByText(
-      "Hikvision read-only · event connection blocked · controller writes unavailable.",
+      "Controller event connection unavailable · check the local connection.",
       { exact: true },
     ),
   ).toBeVisible();

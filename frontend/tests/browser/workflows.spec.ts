@@ -213,7 +213,7 @@ test("card enrolment and safe visitor return", async ({ page }, info) => {
   await page.getByRole("button", { name: "Assign pool card" }).click();
   await page.getByLabel("Available disabled card").selectOption("pool-04");
   await page
-    .getByRole("button", { name: "Assign and simulate activation" })
+    .getByRole("button", { name: "Assign visitor card" })
     .click();
   await page.getByText("Demo simulation controls", { exact: true }).click();
   await page.getByLabel("Fail credential disable", { exact: true }).check();

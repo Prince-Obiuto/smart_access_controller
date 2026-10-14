@@ -4,6 +4,7 @@ import { service } from "../services";
 import { can, roles } from "../permissions";
 import { Heading } from "./Access";
 import { Records } from "./Records";
+import { ControllerAccess } from "./ControllerAccess";
 import {
   Action,
   Badge,
@@ -17,6 +18,7 @@ import type { AccessEvent, Audit, Person, Schedule } from "../models";
 export function Administration() {
   const { data } = useApp();
   const tabs = [
+    ...(can(data.identity.role, "issue") && data.controllerMode !== "SIMULATED" ? ["Controller"] : []),
     ...(can(data.identity.role, "schedules") ? ["Schedules"] : []),
     "Audit logs",
     ...(can(data.identity.role, "settings") ? ["Settings", "Recovery"] : []),
@@ -39,7 +41,9 @@ export function Administration() {
           </button>
         ))}
       </div>
-      {tab === "Schedules" ? (
+      {tab === "Controller" ? (
+        <ControllerAccess />
+      ) : tab === "Schedules" ? (
         <Schedules />
       ) : tab === "Audit logs" ? (
         <Records family="audits" />
@@ -129,7 +133,7 @@ function Schedules() {
                 onClick={() => act({ type: "retry-sync", schedule: true })}
               >
                 {data.controllerTestWritesEnabled
-                  ? "Apply test card-access schedule"
+                  ? "Apply card-access schedule"
                   : "Apply simulated schedule"}
               </Action>
             )}
@@ -258,9 +262,7 @@ function Settings() {
         <Panel title="Visitor card pool">
           <div className="padded">
             <p>
-              {data.controllerWritesAvailable === false
-                ? "Add a local pool asset. Device disable is unconfirmed and controller writes are unavailable."
-                : "Add a reusable physical card asset. It becomes available only after simulated disable confirmation."}
+              Add a reusable visitor card. It becomes available only after controller disable confirmation.
             </p>
             <FormFields
               fields={[{ name: "number", label: "Visitor pool card number" }]}
@@ -502,7 +504,7 @@ export function Notifications() {
                 <h2>{n.title}</h2>
                 <p>{n.detail}</p>
                 <small>
-                  <Time value={n.at} /> · Simulated
+                  <Time value={n.at} />{data.controllerMode === "SIMULATED" || service.mode === "mock" ? " · Simulated" : ""}
                 </small>
               </div>
               {n.read ? (

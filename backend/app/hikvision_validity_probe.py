@@ -6,13 +6,14 @@ import os
 import subprocess
 from tempfile import TemporaryDirectory
 from .config import Settings, ROOT
-from .hikvision_card_diagnostic import save, brief_card, WriteBlocked
+from .hikvision_card_diagnostic import save, brief_card, WriteBlocked, ROOT_EVIDENCE
+from .hikvision_binary import prebuilt
 
 
 def inspect(settings, number):
     if not number.isdecimal() or not 4 <= len(number) <= 32:
         raise WriteBlocked("INVALID_CARD_NUMBER")
-    root = ROOT / "backend/var/acceptance/validity"
+    root = ROOT_EVIDENCE.parent / "validity"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     sdk = settings.hikvision_sdk_dir
     header = sdk / "incEn/HCNetSDK.h"
@@ -22,12 +23,14 @@ def inspect(settings, number):
     if not values[2] or not values[3] or any(any(c in v for c in "\r\n\0") for v in values):
         raise WriteBlocked("RUN_CONFIGURE_HIKVISION_PRIVATELY")
     with TemporaryDirectory(prefix="probe-", dir=root) as directory:
-        binary = root / directory / "validity-probe"
-        subprocess.run(["g++", "-std=c++17", "-O2", "-pthread", "-I", str(header.parent),
+        installed = prebuilt(settings, "hikvision_validity_probe.cpp")
+        binary = installed or (root / directory / "validity-probe")
+        if not installed:
+            subprocess.run(["g++", "-std=c++17", "-O2", "-pthread", "-I", str(header.parent),
                         str(ROOT / "backend/native/hikvision_validity_probe.cpp"), "-L", str(sdk / "lib"),
                         "-Wl,-rpath-link," + str(sdk / "lib"), "-lhcnetsdk", "-o", str(binary)],
-                       check=True, capture_output=True, timeout=30)
-        binary.chmod(0o700)
+                           check=True, capture_output=True, timeout=30)
+            binary.chmod(0o700)
         completed = subprocess.run([str(binary)], input="\n".join(values) + "\n", text=True,
             capture_output=True, timeout=40, env={"PATH": os.defpath, "LANG": "C",
             "LD_LIBRARY_PATH": str(sdk / "lib") + ":" + str(sdk / "lib/HCNetSDKCom")})

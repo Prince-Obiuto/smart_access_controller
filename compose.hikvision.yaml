@@ -3,6 +3,7 @@ services:
   backend:
     environment:
       HIKVISION_BRIDGE_PATH: /opt/hikvision-bin/ift-hikvision
+      HIKVISION_EVIDENCE_DIR: /data/controller-evidence/card-diagnostic
     volumes:
       - type: bind
         source: ${HIKVISION_SDK_DIR:?Configure the extracted official SDK path}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { RemoteUnlock } from "../components/RemoteUnlock";
 import { Link } from "react-router";
 import { useApp } from "../context";
 import { can } from "../permissions";
@@ -83,9 +84,9 @@ export function Dashboard() {
               data.controllerMode === "HIKVISION_CONTROLLED"
                 ? data.controllerReadStatus === "CONNECTED"
                   ? data.controllerMode === "HIKVISION_CONTROLLED"
-                    ? "SDK connection · test writes scoped"
-                    : "Read-only · SDK connection"
-                  : "SDK connection unverified"
+                    ? "Connected · selected card access"
+                    : "Controller connected"
+                  : "Controller connection unverified"
                 : "Local network · simulated",
           },
           {
@@ -129,7 +130,7 @@ export function Dashboard() {
             data.controllerMode === "HIKVISION_CONTROLLED"
               ? data.controllerReadStatus === "CONNECTED"
                 ? `History: ${data.controllerHistoryStatus ?? "UNKNOWN"} · Live subscription: ${data.controllerLiveStatus ?? "UNKNOWN"}. A grant does not prove physical passage. ${data.controllerReaderMappingVerified ? "Reader directions verified by ordinary swipes." : "Reader mapping awaits swipe verification."}`
-                : "Real event collection is blocked. Historical simulated records remain labelled. A swipe does not prove physical passage."
+                : "Controller event collection is unavailable. A swipe does not prove physical passage."
               : "Demo events update automatically. No real controller connection."}
           </div>
         </Panel>
@@ -172,6 +173,7 @@ export function Dashboard() {
                       <Time value={d.lastCommunication} />
                     </dd>
                   </dl>
+                  {can(data.identity.role, "unlock") && d.doorId === "door-1" && (data.controllerMode === "HIKVISION_READ_ONLY" || data.controllerMode === "HIKVISION_CONTROLLED") && service.mode === "http" && <RemoteUnlock />}
                   {can(data.identity.role, "unlock") &&
                     data.controllerWritesAvailable !== false && (
                       <button

@@ -649,7 +649,7 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
       )}
       <small>
         {data.controllerWritesAvailable === false
-          ? "Reader capture is read-only. Swipe only the intended card during the bounded scan; saving local intent does not activate it."
+          ? "Swipe only the intended card while this scan is open. Card access starts after controller confirmation."
           : "Normal access swipes never enrol a card. All scanning and activation are simulated."}
       </small>
     </Modal>

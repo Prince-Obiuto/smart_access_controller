@@ -69,6 +69,26 @@ def card_view(c):
     )
 
 
+def card_permission_state(db, card, settings):
+    if settings.controller_mode == "SIMULATED":
+        return "DISABLED" if card.disabled else "ENABLED"
+    a = db.scalar(select(Assignment).where(Assignment.card_id == card.id).order_by(Assignment.created_at.desc()).limit(1))
+    if a:
+        from .hikvision_writes import physical_confirmation
+        confirmations = list(db.scalars(select(Confirmation).where(Confirmation.assignment_id == a.id)))
+        if confirmations and all(c.version == a.version and c.state == "SYNCHRONIZED" and c.desired == c.last_confirmed and physical_confirmation(db,a,c) for c in confirmations):
+            states = {c.last_confirmed for c in confirmations}
+            if states == {"DISABLED"}: return "DISABLED"
+            if states == {"ENABLED"}: return "ENABLED"
+    else:
+        op = db.scalar(select(Operation).where(Operation.target_type == "POOL",Operation.target_id == card.id).order_by(Operation.created_at.desc()).limit(1))
+        if op:
+            group = list(db.scalars(select(Operation).where(Operation.target_type == "POOL",Operation.target_id == card.id,Operation.version == op.version)))
+            if group and all(o.status == "CONFIRMED" and o.desired == "DISABLED" and o.data.get("simulated") is False and o.data.get("readbackVerified") for o in group):
+                return "DISABLED"
+    return "UNKNOWN"
+
+
 def confirmation_view(c, read_only=False):
     return clean(
         {
@@ -96,7 +116,9 @@ def assignment_view(db, a, read_only=False, settings=None):
         views = []
         for c in conf:
             real = physical_confirmation(db, a, c)
-            views.append({**confirmation_view(c, not real), "simulated": not real})
+            prior = db.scalar(select(Operation).where(Operation.target_type == "ASSIGNMENT", Operation.target_id == a.id,
+                Operation.controller_id == c.controller_id, Operation.version == a.version, Operation.status == "CONFIRMED"))
+            views.append({**confirmation_view(c, not real), "simulated": bool(prior and prior.data.get("simulated") is True)})
         sync = (
             a.sync
             if views and all(c["confirmed"] for c in views)
@@ -385,6 +407,8 @@ def snapshot(db, actor, settings, at=None):
             {
                 **person_view(db, p),
                 "sync": person_sync(p),
+                "controllerCardEligible": p.status == "ACTIVE" and not p.purged and not p.deleted_at
+                and bool(db.scalar(select(Account.id).where(Account.person_id == p.id, Account.role == "USER"))),
                 "accountRecoveryAllowed": actor.role in {"ADMIN", "SUPER_ADMIN"}
                 and p.status == "ACTIVE"
                 and not p.purged
@@ -405,6 +429,7 @@ def snapshot(db, actor, settings, at=None):
         "cards": [
             {
                 **card_view(c),
+                "controllerPermissionState": card_permission_state(db,c,settings),
                 **(
                     {
                         "privileged": bool(

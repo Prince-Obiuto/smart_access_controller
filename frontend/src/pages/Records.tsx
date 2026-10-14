@@ -62,11 +62,11 @@ export function CardsActivity() {
                 {c.poolState && <Badge value={c.poolState} />}
                 <p>
                   Permission:{" "}
-                  {data.controllerWritesAvailable === false
-                    ? "Unknown on device — controller writes unavailable"
-                    : c.disabled
-                      ? "Confirmed disabled (simulated)"
-                      : "Enabled or removal unconfirmed"}
+                  {data.controllerMode === "SIMULATED" || service.mode === "mock"
+                    ? c.disabled ? "Disabled (simulated)" : "Enabled (simulated)"
+                    : c.controllerPermissionState === "DISABLED" ? "Disabled — device verified"
+                    : c.controllerPermissionState === "ENABLED" ? "Enabled — device verified"
+                    : "Controller confirmation pending"}
                 </p>
                 {data.assignments
                   .filter((a) => a.cardId === c.id)
@@ -92,7 +92,7 @@ export function CardsActivity() {
                               {x.lastConfirmedState && (
                                 <>
                                   <br />
-                                  Last simulated confirmation:{" "}
+                                  Last controller confirmation:{" "}
                                   {x.lastConfirmedState}
                                 </>
                               )}
@@ -122,7 +122,7 @@ export function CardsActivity() {
                                     })
                                   }
                                 >
-                                  Retry simulated sync
+                                  Request synchronization
                                 </Action>
                               )}
                           </div>

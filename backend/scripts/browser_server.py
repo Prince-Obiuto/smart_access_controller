@@ -22,6 +22,10 @@ os.environ.update(
     CONTROLLER_MODE=os.environ.get("IFT_BROWSER_CONTROLLER_MODE", "SIMULATED"),
     HIKVISION_USERNAME="",
     HIKVISION_PASSWORD="",
+    SMTP_HOST="",
+    SMTP_FROM="",
+    SMTP_USERNAME="",
+    SMTP_PASSWORD="",
 )
 from alembic.config import Config
 from alembic import command

@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from sqlalchemy import select
 from .models import (
     Account,
     Person,
@@ -21,10 +20,6 @@ def now():
 
 def iso(value):
     return value.isoformat() if value else None
-
-
-def all_rows(db, model):
-    return list(db.scalars(select(model)))
 
 
 def get_setting(db, key, default=None):

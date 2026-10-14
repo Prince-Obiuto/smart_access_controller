@@ -1,5 +1,13 @@
 # Fresh development test accounts
 
+## Current acceptance state — 2026-10-14
+
+This section supersedes the dated re-registration snapshot below; its historical IDs and reset evidence remain retained. **Victor Amaobi** (`20211260402`) completed genuine proof/payment review and normal issuance of fresh card **1053990519**. Application `1e68f236-405e-4ecc-aa53-6d5bc085a92f` is ISSUED and assignment `b4216342-ef7a-435d-8e25-96261bfbbb2a` ACTIVE/SYNCHRONIZED, with authorized 13 October–31 December 2026 access, existing TEMPLATE 3 and owner-confirmed granted swipe/UI. The mistaken Super Admin application remains unissued.
+
+Visitor01/02/03/05 visits have ended; do not renew them or erase their historical ownership. Visitor03/05 were physically returned and checked out, with individually confirmed controller disable. Visitor04's genuinely approved 14 October **13:05–18:45 Lagos** visit remains available for its separate reviewed V assignment. V is **1052815031**; A **1051305927** and B **1052625607** are permanently revoked and must never be reactivated. No duplicate test registrations or password changes are needed. A fresh approved visit is required for the still-pending backend-stopped expiry test.
+
+The current frontend is `http://localhost:5173`, proxying the READ_ONLY Docker API on 8000 with current code mounted read-only. The temporary API is stopped. Original upload storage and private acceptance backups are preserved. See [development-acceptance.md](development-acceptance.md) for current automated, device-readback and owner-observed results.
+
 ## Re-registration verified — 2026-10-13
 
 The owner registered **Victor Amaobi**, STUDENT/USER, person `bb0bfc7f-1689-4be5-bdc3-83b1e4309384`, reference `20211260402`, matching the intended institutional email. The owner-entered name order is preserved. His new FIRST application `1e68f236-405e-4ecc-aa53-6d5bc085a92f` is **APPROVED**, has proof and a recorded Super Admin reviewer, and has no assignment. Administrative access dates remain unset. The separate Super Admin application was identified by the owner as a mistake; it remains unissued and is excluded from acceptance.

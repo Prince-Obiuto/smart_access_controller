@@ -40,6 +40,9 @@ static bool stage(const char *name, BOOL ok) {
          ",\"error\":" + std::to_string(error) + "}");
     return ok;
 }
+#ifdef IFT_TIMED_UNLOCK
+#include "hikvision_door_duration.h"
+#endif
 #ifndef IFT_NO_DIAGNOSTIC_MAIN
 int main() {
     rlimit core{0,0}; setrlimit(RLIMIT_CORE, &core);
@@ -144,7 +147,9 @@ int main() {
         // software close timer: a process crash must not leave the door open.
         NET_DVR_DOOR_CFG current{}; current.dwSize=sizeof(current); DWORD count=0;
         BOOL read=NET_DVR_GetDVRConfig(user,NET_DVR_GET_DOOR_CFG,1,&current,sizeof(current),&count);
-        if(command!="UNLOCK5" || !complete || !read || count!=sizeof(current) || current.dwSize!=sizeof(current) ||
+        if(command=="DURATION5") {
+          configure_door_duration(user,door,current,complete,read,count);
+        } else if(command!="UNLOCK5" || !complete || !read || count!=sizeof(current) || current.dwSize!=sizeof(current) ||
            std::memcmp(&current,&door,sizeof(current))!=0 || current.byOpenDuration!=5) {
             emit("{\"kind\":\"unlockResult\",\"sent\":false,\"ok\":false,\"code\":\"DOOR_DURATION_OR_BASELINE_UNVERIFIED\"}");
         } else {

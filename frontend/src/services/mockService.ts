@@ -29,6 +29,24 @@ const plus = (iso: string, days: number) =>
   new Date(Date.parse(iso) + days * day).toISOString();
 const copy = <T>(v: T): T => structuredClone(v);
 export class MockService implements AccessControlService {
+  async unlockStatus(): Promise<Awaited<ReturnType<AccessControlService["unlockStatus"]>>> {
+    throw new ServiceError("NOT_CONNECTED", "Real door control is unavailable in demo mode.");
+  }
+  async remoteUnlock(): Promise<Awaited<ReturnType<AccessControlService["remoteUnlock"]>>> {
+    throw new ServiceError("NOT_CONNECTED", "Real door control is unavailable in demo mode.");
+  }
+  async configureUnlockDuration(): Promise<Awaited<ReturnType<AccessControlService["configureUnlockDuration"]>>> { return this.remoteUnlock(); }
+  async controllerAccess(): Promise<import("./accessControlService").ControllerAccess> {
+    throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");
+  }
+  async authorizeControllerCards(): Promise<import("./accessControlService").ControllerAccess> { return this.controllerAccess(); }
+  async closeControllerAccess(): Promise<import("./accessControlService").ControllerAccess> { return this.controllerAccess(); }
+  async readControllerCard(): Promise<import("./accessControlService").ControllerCardRead> {
+    throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");
+  }
+  async executeControllerOperation(): Promise<{ operationId: string; status: string; readbackVerified: boolean }> {
+    throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");
+  }
   async recoveryOptions() {
     return {
       available: false,

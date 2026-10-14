@@ -390,14 +390,14 @@ def operation_result(db, result, settings=None):
         return {
             "intendedState": ops[-1].desired,
             "result": "PENDING",
-            "message": READ_ONLY_MESSAGE,
+            "message": "Controller confirmation pending. Authorize the card and apply its operation in Administration → Controller.",
             "confirmations": [
                 {
                     "controllerId": o.controller_id,
                     "confirmed": False,
                     "state": "OUT_OF_SYNC",
                     "intendedState": o.desired,
-                    "simulated": True,
+                    "simulated": settings.controller_mode == "SIMULATED",
                 }
                 for o in ops
             ],

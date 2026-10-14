@@ -9,6 +9,7 @@ export interface Identity {
   email: string;
 }
 export interface Person {
+  controllerCardEligible?: boolean;
   accountRecoveryAllowed?: boolean;
   id: string;
   type: PersonType;
@@ -29,6 +30,7 @@ export interface Person {
   restored?: boolean;
 }
 export interface Card {
+  controllerPermissionState?: "ENABLED" | "DISABLED" | "UNKNOWN";
   id: string;
   number: string;
   kind: "PERSONAL" | "VISITOR";

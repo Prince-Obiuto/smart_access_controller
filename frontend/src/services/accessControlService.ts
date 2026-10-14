@@ -30,8 +30,29 @@ export class ServiceError extends Error {
     this.name = "ServiceError";
   }
 }
+export interface ControllerAccess {
+  enabled: boolean;
+  expired: boolean;
+  expiresAt?: string;
+  template: number;
+  cards: string[];
+  operations: { id: string; card: string; desired: string; status: string; message: string }[];
+}
+export interface ControllerCardRead {
+  card: string;
+  readAt: string;
+  record: null | { type: number; valid: number; doorRights: Record<string, number>; plansByDoor: Record<string, number[]>; start: number[]; expiry: number[] };
+}
 export interface AccessControlService {
   readonly mode: "mock" | "http";
+  unlockStatus(): Promise<{ doorId: string; configuredSeconds: number; requiredSeconds: number; ready: boolean; sensor: string }>;
+  remoteUnlock(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
+  configureUnlockDuration(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
+  controllerAccess(): Promise<ControllerAccess>;
+  authorizeControllerCards(cards: { number: string; kind: "PERSONAL" | "VISITOR"; personIds: string[] }[]): Promise<ControllerAccess>;
+  closeControllerAccess(): Promise<ControllerAccess>;
+  readControllerCard(number: string): Promise<ControllerCardRead>;
+  executeControllerOperation(id: string): Promise<{ operationId: string; status: string; readbackVerified: boolean; message?: string }>;
   currentIdentity(): Promise<Identity | null>;
   login(email: string, password: string): Promise<Identity>;
   logout(): Promise<void>;

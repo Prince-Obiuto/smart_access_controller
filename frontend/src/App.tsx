@@ -210,8 +210,8 @@ function Application() {
           ? `Hikvision · ${data.controllerReadStatus === "CONNECTED" ? "event connection active" : "event connection unavailable"} · ${data.controllerWriteMessage}`
           : data?.controllerMode === "HIKVISION_READ_ONLY"
             ? data.controllerReadStatus === "CONNECTED"
-              ? "Hikvision read-only · SDK connection active · controller writes unavailable."
-              : "Hikvision read-only · event connection blocked · controller writes unavailable."
+              ? "Controller connected · card operations require administrator authorization."
+              : "Controller event connection unavailable · check the local connection."
             : data?.controllerMode === "SIMULATED"
               ? "Controller integration is simulated."
               : "Controller status available after sign-in."}

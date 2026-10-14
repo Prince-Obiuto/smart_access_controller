@@ -57,6 +57,7 @@ services:
       # Local development migrations stay current across an owner PC reboot.
       - ./backend/alembic/versions:/app/backend/alembic/versions:ro
       - ./backend/app:/app/backend/app:ro
+      - ./backend/native:/app/backend/native:ro
     depends_on:
       db:
         condition: service_healthy

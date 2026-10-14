@@ -21,6 +21,8 @@ os.environ["CONTROLLER_MODE"] = "SIMULATED"
 # Test processes must not inherit live controller credentials.
 os.environ["HIKVISION_USERNAME"] = ""
 os.environ["HIKVISION_PASSWORD"] = ""
+for key in ("SMTP_HOST", "SMTP_FROM", "SMTP_USERNAME", "SMTP_PASSWORD"):
+    os.environ[key] = ""
 os.environ["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
 from alembic.config import Config
 from alembic import command

@@ -241,7 +241,8 @@ class ExistingTemplateTransport:
                 "artifact": save("normal-workflow-card", {"native": self.rows, "actualRecord": self.last_card})}
     def close(self):
         if self.binary:
-            self.binary.unlink(missing_ok=True)
+            if self.binary.parent != self.settings.hikvision_bridge_path.parent:
+                self.binary.unlink(missing_ok=True)
             self.binary = None
 
 

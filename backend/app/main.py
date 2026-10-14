@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import FileResponse, JSONResponse
 
-from . import password_recovery as recovery_password
+from . import password_recovery as recovery_password, controller_access
 from .common import audit, get_setting, identity, initialize, iso, now
 from .config import Settings
 from .db import Database, domain_lock
@@ -48,6 +48,8 @@ from .retention import run_retention
 from .schemas import (
     AdminRecovery,
     CommandUnion,
+    ControllerAuthorization,
+    ControllerExecution,
     Filters,
     Login,
     RecoveryRequest,
@@ -149,6 +151,12 @@ def create_app(settings=None, database=None):
     @app.exception_handler(DomainError)
     async def error(request, exc):
         return JSONResponse({"code": exc.code, "message": exc.message}, exc.status)
+
+    from .hikvision_writes import WriteBlocked
+
+    @app.exception_handler(WriteBlocked)
+    async def controller_blocked(request, exc):
+        return JSONResponse({"code": "CONTROLLER_UNAVAILABLE", "message": str(exc)}, 409)
 
     @app.exception_handler(IntegrityError)
     async def conflict(request, exc):
@@ -446,6 +454,62 @@ def create_app(settings=None, database=None):
     @app.get("/api/workspace")
     def workspace(request: Request, db: DB):
         return snapshot(db, actor_for(db, request), settings)
+
+    @app.get("/api/controller/access")
+    def controller_access_status(request: Request, db: DB):
+        actor = actor_for(db, request)
+        controller_access.authorize(db, actor, settings)
+        return controller_access.status(db, settings)
+
+    @app.get("/api/controller/unlock")
+    def controller_unlock_status(request: Request, db: DB):
+        from .hikvision_unlock import application_prepare
+        actor = actor_for(db, request)
+        require(db, actor, "unlock", settings)
+        if settings.controller_mode == "SIMULATED":
+            raise DomainError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.", 409)
+        db.commit()
+        return application_prepare(settings)
+
+    @app.post("/api/controller/unlock")
+    def controller_unlock(body: ControllerExecution, request: Request, db: DB):
+        from .hikvision_unlock import application_command
+        actor = actor_for(db, request, True)
+        if not body.confirmed:
+            raise DomainError("VALIDATION_ERROR", "Confirm one five-second Door 1 release.")
+        return application_command(db, settings, actor, request.headers.get("idempotency-key"))
+
+    @app.post("/api/controller/unlock-duration")
+    def controller_unlock_duration(body: ControllerExecution, request: Request, db: DB):
+        from .hikvision_unlock import application_command
+        actor = actor_for(db, request, True)
+        if not body.confirmed:
+            raise DomainError("VALIDATION_ERROR", "Confirm the five-second Door 1 release setting.")
+        return application_command(db, settings, actor, request.headers.get("idempotency-key"), configure=True)
+
+    @app.post("/api/controller/access/authorize")
+    def authorize_controller_cards(body: ControllerAuthorization, request: Request, db: DB):
+        actor = actor_for(db, request, True)
+        if not body.confirmed or len({c.number for c in body.cards}) != len(body.cards):
+            raise DomainError("VALIDATION_ERROR", "Confirm the distinct selected cards.")
+        cards = {c.number: {"kind": c.kind, "personIds": c.personIds} for c in body.cards}
+        return controller_access.activate(db, settings, actor, cards)
+
+    @app.post("/api/controller/access/close")
+    def close_controller_access(request: Request, db: DB):
+        return controller_access.close(db, settings, actor_for(db, request, True))
+
+    @app.get("/api/controller/cards/{number}")
+    def read_controller_card(number: str, request: Request, db: DB):
+        controller_access.authorize(db, actor_for(db, request), settings)
+        return controller_access.read_card(db, settings, number)
+
+    @app.post("/api/controller/operations/{id}/execute")
+    def execute_controller_operation(id: str, body: ControllerExecution, request: Request, db: DB):
+        actor = actor_for(db, request, True)
+        if not body.confirmed:
+            raise DomainError("VALIDATION_ERROR", "Confirm this card operation.")
+        return controller_access.execute(db, settings, actor, id)
 
     @app.post("/api/commands")
     def commands(body: CommandUnion, request: Request, db: DB):

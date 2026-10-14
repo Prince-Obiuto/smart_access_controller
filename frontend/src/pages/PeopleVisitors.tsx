@@ -161,7 +161,7 @@ export function People() {
         >
           <p>
             Identity fields belong to Admin. Date changes remain pending until
-            simulated controller synchronization. New records do not create
+            controller confirmation. New records do not create
             administrative accounts.
           </p>
           <FormFields
@@ -330,7 +330,7 @@ export function Visitors() {
                           })
                         }
                       >
-                        Retry simulated sync
+                        Request synchronization
                       </Action>
                     )}
                 </div>
@@ -420,15 +420,11 @@ export function Visitors() {
                 <Badge value={c.poolState!} />
                 <p>
                   Controller permission:{" "}
-                  {data.controllerWritesAvailable === false
-                    ? "Device disable unconfirmed — controller writes unavailable"
-                    : c.disabled
-                      ? data.controllerMode === "HIKVISION_CONTROLLED"
-                        ? c.poolState === "AVAILABLE_DISABLED"
-                          ? "Confirmed disabled (device readback)"
-                          : "Device disable pending or unconfirmed"
-                        : "Confirmed disabled (simulated)"
-                      : "Enabled or removal unconfirmed"}
+                  {data.controllerMode === "SIMULATED" || service.mode === "mock"
+                    ? c.disabled ? "Disabled (simulated)" : "Enabled (simulated)"
+                    : c.controllerPermissionState === "DISABLED" ? "Disabled — device verified"
+                    : c.controllerPermissionState === "ENABLED" ? "Enabled — device verified"
+                    : "Controller confirmation pending"}
                 </p>
                 <small>{c.id} · independent temporary assignments</small>
               </div>
@@ -481,7 +477,7 @@ export function Visitors() {
                   .map((c) => ({ value: c.id, label: c.number })),
               },
             ]}
-            submit="Assign and simulate activation"
+            submit="Assign visitor card"
             onSubmit={async (d) => {
               await act({
                 type: "visitor-assign",

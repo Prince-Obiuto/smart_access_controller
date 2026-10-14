@@ -90,6 +90,21 @@ class AdminRecovery(StrictModel):
     identityConfirmed: bool
 
 
+class ControllerCardScope(StrictModel):
+    number: str = Field(pattern=r"^[0-9]{4,20}$")
+    kind: Literal["PERSONAL", "VISITOR"]
+    personIds: list[str] = Field(min_length=1, max_length=4)
+
+
+class ControllerAuthorization(StrictModel):
+    cards: list[ControllerCardScope] = Field(min_length=1, max_length=4)
+    confirmed: bool
+
+
+class ControllerExecution(StrictModel):
+    confirmed: bool
+
+
 class PersonData(StrictModel):
     type: Literal["STUDENT", "STAFF"]
     reference: str = Field(min_length=1, max_length=100)

@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.common import now, iso, get_setting, set_setting
-from app.models import Account, Card, Operation
+from app.models import Card, Operation
 from app.hikvision_card_diagnostic import CARDS, KEY, validate_action, verify_baseline, run_action
 from app.hikvision_writes import WriteBlocked
 
