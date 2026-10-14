@@ -90,6 +90,16 @@ class AccessService:
             raise DomainError("CONFLICT", "Configure a target controller first.")
         for device in devices:
             scope = get_setting(self.db, "hikvision:write-scope:" + device.id)
+            stamp = self.settings.controller_mode == "HIKVISION_CONTROLLED" and scope.get("enabled")
+            operation_data = dict(data or {})
+            if scope.get("kind") == "EXISTING_TEMPLATE":
+                operation_data.pop("writeEpoch", None)
+                assignment = self.db.get(Assignment, target_id) if target_type == "ASSIGNMENT" else None
+                card = self.db.get(Card, assignment.card_id) if assignment else self.db.get(Card, target_id) if target_type == "POOL" else None
+                bound = scope.get("cards", {}).get(card.number, {}) if card else {}
+                stamp = stamp and bool(card and bound.get("kind") == card.kind and (
+                    assignment and assignment.person_id in bound.get("personIds", [])
+                    or target_type == "POOL" and desired == "DISABLED"))
             op = Operation(
                 controller_id=device.id,
                 target_type=target_type,
@@ -100,11 +110,10 @@ class AccessService:
                 actor_id=self.actor.id if self.actor else None,
                 created_at=self.at,
                 data={
-                    **(data or {}),
+                    **operation_data,
                     **(
                         {"writeEpoch": scope["epoch"]}
-                        if self.settings.controller_mode == "HIKVISION_CONTROLLED"
-                        and scope.get("enabled")
+                        if stamp
                         else {}
                     ),
                 },

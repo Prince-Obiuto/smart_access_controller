@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useApp } from "../context";
 import { service } from "../services";
-import type { AccessControlService } from "../services/accessControlService";
-import { Action, Modal } from "./ui";
+import type {
+  AccessControlService,
+  UnlockOperation,
+} from "../services/accessControlService";
+import { Action, Badge, Modal } from "./ui";
 
 export function RemoteUnlock() {
   const { data, notify } = useApp();
@@ -10,29 +13,70 @@ export function RemoteUnlock() {
   const [info, setInfo] = useState<Awaited<
     ReturnType<AccessControlService["unlockStatus"]>
   > | null>(null);
+  const [last, setLast] = useState<UnlockOperation | null>(null);
   const [error, setError] = useState("");
   const [configure, setConfigure] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const read = async () => {
-    setInfo(null);
-    setError("");
-    setMessage("");
+  const [reading, setReading] = useState(false);
+  const inFlight = useRef(false);
+  const read = async (operationId?: string) => {
+    setReading(true);
     try {
-      setInfo(await service.unlockStatus());
+      const current = await service.unlockStatus(operationId);
+      setInfo(current);
+      if (current.operation) setLast(current.operation);
     } catch (e) {
       setError((e as Error).message);
+      setInfo((current) =>
+        current
+          ? { ...current, ready: false, controllerStatus: "FAILED" }
+          : current,
+      );
+    } finally {
+      setReading(false);
     }
   };
+  const submit = async (
+    work: () => Promise<UnlockOperation>,
+    unlock = true,
+  ) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await work();
+      if (unlock) setLast(result);
+      setMessage(result.message);
+      notify(result.message, result.status === "FAILED");
+      setConfigure(false);
+      await read(unlock ? result.operationId : last?.operationId);
+    } catch (e) {
+      setError((e as Error).message);
+      await read(last?.operationId);
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+  const unresolved = [...(info?.unresolvedOperations ?? [])];
+  if (
+    last &&
+    ["PENDING", "UNCERTAIN"].includes(last.status) &&
+    !unresolved.some((o) => o.operationId === last.operationId)
+  )
+    unresolved.push(last);
+  const blocked = busy || reading || unresolved.length > 0 || !info?.ready;
   return (
     <>
       <Action
         className="primary full"
         onClick={async () => {
           setOpen(true);
-          setMessage("");
           setConfigure(false);
-          await read();
+          setError("");
+          await read(last?.operationId);
         }}
       >
         Remote unlock
@@ -49,140 +93,159 @@ export function RemoteUnlock() {
               {error}
             </p>
           )}
-          {!info && !error && !message && (
-            <p role="status">Reading Door 1 configuration…</p>
-          )}
+          {reading && <p role="status">Reading Door 1 status…</p>}
           {info && (
             <>
               <p>
-                Door 1’s configured release is{" "}
-                <strong>{info.configuredSeconds} seconds</strong>. Required
-                timed release: <strong>5 seconds</strong>.
+                Door 1’s configured release:{" "}
+                <strong>
+                  {info.configuredSeconds === null
+                    ? "Unavailable"
+                    : `${info.configuredSeconds} seconds`}
+                </strong>
+                . Required timed release: <strong>5 seconds</strong>.
               </p>
               <p>
-                The physical door state is unknown. A controller acknowledgement
-                does not prove the door opened.
-              </p>
-              <p role="status">
                 Controller communication:{" "}
-                <strong>{info.controllerStatus || "UNKNOWN"}</strong>
+                <strong>{info.controllerStatus}</strong>. Door sensor:{" "}
+                <strong>{info.sensor}</strong>.
               </p>
-              {info.uncertainOperationId && (
-                <div className="callout warning">
-                  <p>
-                    The previous command was acknowledged by the controller,
-                    but its physical result was not observed by the
-                    application.
+              {info.controllerError && (
+                <p role="alert">
+                  Controller read failed: {info.controllerError}.
+                </p>
+              )}
+              {last && (
+                <div className="callout">
+                  <p style={{ overflowWrap: "anywhere" }}>
+                    Submitted operation: <strong>{last.operationId}</strong> ·{" "}
+                    <Badge value={last.status} />
                   </p>
                   <p>
-                    Observe Door 1 release and its return to the secured state,
-                    then confirm that observation here. Do not press unlock
-                    again.
+                    SDK acknowledgement:{" "}
+                    {last.sdkStatus ??
+                      (last.sdkAcknowledged === true
+                        ? "ACKNOWLEDGED"
+                        : "UNKNOWN")}
+                    .
                   </p>
-                  <Action
-                    onClick={async () => {
-                      if (busy) return;
-                      setBusy(true);
-                      setError("");
-                      try {
-                        const result = await service.confirmPhysicalUnlock();
-                        setMessage(result.message);
-                        notify(result.message, false);
-                        await read();
-                      } catch (e) {
-                        setError((e as Error).message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                    disabled={busy}
-                  >
-                    {busy
-                      ? "Saving observation…"
-                      : "Confirm Door 1 released and relocked"}
-                  </Action>
+                  <p>
+                    Transport: {last.transportStatus ?? "UNKNOWN"}. Physical
+                    result: {last.physicalState}.
+                  </p>
                 </div>
               )}
+              {unresolved.length > 0 && (
+                <p role="status">
+                  Another unlock is blocked until every unresolved Door 1
+                  operation is observed or reconciled.
+                </p>
+              )}
+              {unresolved.map((o) => (
+                <div
+                  className="callout warning"
+                  key={o.operationId}
+                  role="group"
+                  aria-label={`Unlock operation ${o.operationId}`}
+                >
+                  <p style={{ overflowWrap: "anywhere" }}>
+                    Operation: <strong>{o.operationId}</strong> ·{" "}
+                    <Badge value={o.status} />
+                  </p>
+                  <p>
+                    SDK acknowledgement:{" "}
+                    {o.sdkStatus ??
+                      (o.sdkAcknowledged === true ? "ACKNOWLEDGED" : "UNKNOWN")}
+                    . Transport: {o.transportStatus ?? "UNKNOWN"}.
+                  </p>
+                  <p>{o.message}</p>
+                  <p>
+                    Confirm only the release and relocking you observed for this
+                    operation. If you missed its release, check that Door 1 is
+                    secured now and reconcile without claiming the past release.
+                  </p>
+                  {o.status === "UNCERTAIN" && o.sdkStatus !== "SIMULATED" && (
+                    <Action
+                      disabled={busy || reading}
+                      onClick={() =>
+                        submit(() =>
+                          service.confirmPhysicalUnlock(o.operationId),
+                        )
+                      }
+                    >
+                      Confirm this release and relocking
+                    </Action>
+                  )}
+                  <Action
+                    disabled={busy || reading}
+                    onClick={() =>
+                      submit(() =>
+                        service.reconcileUnlock(
+                          o.operationId,
+                          "Operator checked Door 1 is secured now; original release was not observed.",
+                        ),
+                      )
+                    }
+                  >
+                    Door is secured now; original release unobserved
+                  </Action>
+                </div>
+              ))}
               {configure ? (
                 <>
                   <p>
                     Change Door 1’s normal release duration from{" "}
-                    {info.configuredSeconds} to 5 seconds? This applies to Door
-                    1’s normal timed releases.
+                    {info.configuredSeconds} to 5 seconds?
                   </p>
                   <Action
                     className="primary"
-                    onClick={async () => {
-                      if (busy) return;
-                      setBusy(true);
-                      setError("");
-                      try {
-                        const result = await service.configureUnlockDuration();
-                        setMessage(result.message);
-                        notify(result.message, result.status !== "CONFIRMED");
-                        setConfigure(false);
-                        await read();
-                      } catch (e) {
-                        setError((e as Error).message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                    disabled={busy}
+                    disabled={busy || reading}
+                    onClick={() =>
+                      submit(() => service.configureUnlockDuration(), false)
+                    }
                   >
-                    {busy ? "Waiting for controller…" : "Confirm duration change"}
+                    Confirm duration change
                   </Action>
-                  <button onClick={() => setConfigure(false)}>
+                  <button disabled={busy} onClick={() => setConfigure(false)}>
                     Cancel change
                   </button>
                 </>
               ) : (
                 <>
-                  {!info.ready && (
+                  {info.configuredSeconds !== 5 && (
                     <p role="status">
                       The configured duration must match five seconds before
                       remote unlock is available.
                     </p>
                   )}
-                  {info.ready && (
+                  {info.configuredSeconds === 5 && (
                     <Action
                       className="primary"
-                      onClick={async () => {
-                        if (busy) return;
-                        setBusy(true);
-                        setError("");
-                        try {
-                          const result = await service.remoteUnlock();
-                          setMessage(result.message);
-                          notify(result.message, result.status === "FAILED");
-                          setInfo((current) =>
-                            current
-                              ? {
-                                  ...current,
-                                  sensor: result.physicalState,
-                                }
-                              : current,
-                          );
-                        } catch (e) {
-                          setError((e as Error).message);
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                      disabled={busy}
+                      disabled={blocked}
+                      onClick={() => submit(() => service.remoteUnlock())}
                     >
-                      {busy
-                        ? "Waiting for controller…"
-                        : "Unlock Door 1 once for 5 seconds"}
+                      Unlock Door 1 once for 5 seconds
                     </Action>
                   )}
-                  {!info.ready && data.identity.role === "SUPER_ADMIN" && (
-                    <button onClick={() => setConfigure(true)}>
-                      Set release duration to 5 seconds
-                    </button>
-                  )}
+                  {info.configuredSeconds !== null &&
+                    info.configuredSeconds !== 5 &&
+                    info.controllerStatus === "CONNECTED" &&
+                    data.identity.role === "SUPER_ADMIN" && (
+                      <button
+                        disabled={busy || reading}
+                        onClick={() => setConfigure(true)}
+                      >
+                        Set release duration to 5 seconds
+                      </button>
+                    )}
                 </>
               )}
+              <Action
+                disabled={busy || reading}
+                onClick={() => read(last?.operationId)}
+              >
+                Refresh unlock status
+              </Action>
             </>
           )}
           {message && <p role="status">{message}</p>}

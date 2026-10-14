@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import sys
+from contextlib import contextmanager
 from getpass import getpass
 from types import SimpleNamespace
 from sqlalchemy import func, select, text
@@ -21,6 +22,121 @@ class UnlockBridge(Bridge):
     source_name = "hikvision_timed_unlock.cpp"
 
 
+UNLOCK_COMMANDS = {"UNLOCK", "UNLOCK5"}
+UNRESOLVED_STATUSES = {"PENDING", "UNCERTAIN"}
+
+
+@contextmanager
+def command_lock(db, settings):
+    lock_id = int.from_bytes(
+        hashlib.sha256(
+            ("ift-write:" + settings.hikvision_controller_id).encode()
+        ).digest()[:8],
+        "big",
+        signed=True,
+    )
+    db.commit()
+    with db.get_bind().connect() as lock:
+        if not lock.execute(
+            text("SELECT pg_try_advisory_lock(:id)"), {"id": lock_id}
+        ).scalar():
+            raise DomainError(
+                "CONFLICT", "Another controller operation is in progress.", 409
+            )
+        try:
+            yield
+        finally:
+            db.rollback()
+            lock.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": lock_id})
+            lock.commit()
+
+
+def unresolved_unlocks(db, settings):
+    return list(
+        db.scalars(
+            select(Operation)
+            .where(
+                Operation.controller_id == settings.hikvision_controller_id,
+                Operation.target_type == "DOOR",
+                Operation.target_id == "door-1",
+                Operation.desired.in_(UNLOCK_COMMANDS),
+                Operation.status.in_(UNRESOLVED_STATUSES),
+            )
+            .order_by(Operation.created_at, Operation.id)
+        )
+    )
+
+
+def operation_view(op):
+    rows = [r for r in (op.data.get("nativeResult") or []) if isinstance(r, dict)]
+    acknowledgement = op.data.get("sdkAcknowledged")
+    if (
+        acknowledgement is None
+        and len(rows) == 1
+        and isinstance(rows[0].get("ok"), bool)
+    ):
+        acknowledgement = rows[0]["ok"]
+    sdk_status = (
+        "ACKNOWLEDGED"
+        if acknowledgement is True
+        else "NOT_SENT"
+        if any(r.get("sent") is False for r in rows)
+        else "NOT_ACKNOWLEDGED"
+        if acknowledgement is False
+        else "UNKNOWN"
+    )
+    if op.data.get("simulated") is True:
+        acknowledgement, sdk_status = None, "SIMULATED"
+    physical = op.data.get("physicalState", "UNKNOWN")
+    message = (
+        "Door 1 release and relocking confirmed by operator."
+        if op.data.get("physicalObservationConfirmed")
+        else "Door 1 is secured; the previous release remains unobserved."
+        if op.status == "RECONCILED"
+        else "Native checks rejected this command before dispatch; no unlock was sent."
+        if sdk_status == "NOT_SENT"
+        else "Command remains pending; no successful SDK acknowledgement is recorded."
+        if op.status == "PENDING"
+        else "SDK acknowledged the command; physical release and relocking await observation."
+        if acknowledgement is True
+        else "No successful SDK acknowledgement is recorded; the door command outcome remains uncertain."
+    )
+    return {
+        "operationId": op.id,
+        "command": op.desired,
+        "status": op.status,
+        "createdAt": op.created_at.isoformat(),
+        "sdkAcknowledged": acknowledgement,
+        "sdkStatus": sdk_status,
+        "transportStatus": op.data.get("transportStatus", sdk_status),
+        "physicalState": physical,
+        "readbackVerified": False,
+        "message": message,
+    }
+
+
+def bound_unlock(db, settings, operation_id):
+    op = db.scalar(
+        select(Operation)
+        .where(Operation.id == operation_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        not op
+        or op.controller_id != settings.hikvision_controller_id
+        or op.target_type != "DOOR"
+        or op.target_id != "door-1"
+        or op.desired not in UNLOCK_COMMANDS
+    ):
+        raise DomainError(
+            "CONFLICT",
+            "This operation is not a Door 1 unlock on the configured controller.",
+            409,
+        )
+    return op
+
+
 def validate_duration(rows):
     fields = [r for r in rows if r.get("kind") == "doorFields"]
     if (
@@ -31,94 +147,104 @@ def validate_duration(rows):
         raise WriteBlocked("FIVE_SECOND_DOOR_DURATION_UNVERIFIED")
 
 
-def application_prepare(settings, db=None):
+def application_prepare(settings, db=None, operation_id=None):
     from .hikvision_existing import DEVICE
 
+    result = {
+        "doorId": "door-1",
+        "configuredSeconds": None,
+        "requiredSeconds": 5,
+        "ready": False,
+        "sensor": "UNKNOWN",
+        "controllerStatus": "FAILED",
+    }
     bridge = UnlockBridge(settings)
     try:
         baseline = bridge.start()
         if baseline["device"] != DEVICE:
             raise WriteBlocked("DESIGNATED_DEVICE_IDENTITY_CHANGED")
         fields = next((r for r in bridge.rows if r.get("kind") == "doorFields"), {})
-        result = {
-            "doorId": "door-1",
-            "configuredSeconds": fields.get("openDuration"),
-            "requiredSeconds": 5,
-            "ready": fields.get("openDuration") == 5,
-            "sensor": "UNKNOWN",
-            "controllerStatus": "CONNECTED",
-        }
-        if db is not None:
-            pending = db.scalar(
-                select(Operation)
-                .where(
-                    Operation.controller_id == settings.hikvision_controller_id,
-                    Operation.target_type == "DOOR",
-                    Operation.target_id == "door-1",
-                    Operation.desired == "UNLOCK5",
-                    Operation.status == "UNCERTAIN",
-                )
-                .order_by(Operation.created_at.desc())
-                .limit(1)
-            )
-            if pending:
-                result.update(
-                    uncertainOperationId=pending.id,
-                    uncertainMessage="A previous Door 1 unlock is awaiting physical confirmation.",
-                )
-        return result
+        result.update(
+            configuredSeconds=fields.get("openDuration"),
+            ready=fields.get("openDuration") == 5,
+            controllerStatus="CONNECTED",
+        )
+    except (WriteBlocked, OSError) as exc:
+        result["controllerError"] = (
+            str(exc) if isinstance(exc, WriteBlocked) else "NATIVE_IO_FAILED"
+        )
     finally:
         bridge.close()
+    if db is not None:
+        pending = unresolved_unlocks(db, settings)
+        result["unresolvedOperations"] = [operation_view(op) for op in pending]
+        result["ready"] = result["ready"] and not pending
+        if operation_id:
+            result["operation"] = operation_view(
+                bound_unlock(db, settings, operation_id)
+            )
+    return result
 
 
-def confirm_physical_unlock(db, settings, actor):
+def confirm_physical_unlock(
+    db, settings, actor, operation_id, *, secured_only=False, reason=None
+):
     """Close the uncertainty window only after the operator observes the door."""
     require(db, actor, "unlock", settings)
-    domain_lock(db)
-    op = db.scalar(
-        select(Operation)
-        .where(
-            Operation.controller_id == settings.hikvision_controller_id,
-            Operation.target_type == "DOOR",
-            Operation.target_id == "door-1",
-            Operation.desired == "UNLOCK5",
-            Operation.status == "UNCERTAIN",
+    with command_lock(db, settings):
+        domain_lock(db)
+        db.refresh(actor)
+        require(db, actor, "unlock", settings)
+        op = bound_unlock(db, settings, operation_id)
+        allowed = UNRESOLVED_STATUSES if secured_only else {"UNCERTAIN"}
+        if op.status not in allowed:
+            raise DomainError(
+                "CONFLICT",
+                "This operation is no longer awaiting that observation. Refresh its status.",
+                409,
+            )
+        if not secured_only and op.data.get("simulated") is True:
+            raise DomainError(
+                "CONFLICT",
+                "A simulated record requires reconciliation and cannot confirm a physical release.",
+                409,
+            )
+        prior_status = op.status
+        op.status = "RECONCILED" if secured_only else "CONFIRMED"
+        op.completed_at = now()
+        op.data = {
+            **op.data,
+            "physicalState": "SECURED_OBSERVED_RELEASE_UNKNOWN"
+            if secured_only
+            else "RELEASED_AND_RELOCKED_OBSERVED",
+            "physicalObservationConfirmed": not secured_only,
+            "physicalObservationPending": False,
+            "physicalObservationAt": now().isoformat(),
+            "physicalObservationBy": actor.id,
+            "observationHistory": [
+                *op.data.get("observationHistory", []),
+                {
+                    "priorStatus": prior_status,
+                    "actorId": actor.id,
+                    "at": now().isoformat(),
+                    "releasedAndRelocked": not secured_only,
+                    "securedOnly": secured_only,
+                    "reason": reason,
+                },
+            ],
+            "readbackVerified": False,
+        }
+        audit(
+            db,
+            actor,
+            "TIMED_UNLOCK_RECONCILIATION"
+            if secured_only
+            else "TIMED_UNLOCK_PHYSICAL_CONFIRMATION",
+            op.id,
+            result=op.status,
         )
-        .order_by(Operation.created_at.desc())
-        .limit(1)
-    )
-    if not op:
-        raise DomainError(
-            "CONFLICT",
-            "There is no uncertain Door 1 unlock awaiting physical confirmation.",
-            409,
-        )
-    op.status = "CONFIRMED"
-    op.completed_at = now()
-    op.data = {
-        **op.data,
-        "physicalState": "RELEASED_AND_RELOCKED_OBSERVED",
-        "physicalObservationConfirmed": True,
-        "physicalObservationAt": now().isoformat(),
-        "physicalObservationBy": actor.id,
-        "message": "Door 1 release and return to secured state confirmed by operator.",
-        "readbackVerified": False,
-    }
-    audit(
-        db,
-        actor,
-        "TIMED_UNLOCK_PHYSICAL_CONFIRMATION",
-        op.id,
-        result="CONFIRMED",
-    )
-    db.commit()
-    return {
-        "operationId": op.id,
-        "status": op.status,
-        "physicalState": op.data["physicalState"],
-        "readbackVerified": False,
-        "message": op.data["message"],
-    }
+        db.commit()
+        return operation_view(op)
 
 
 def application_command(db, settings, actor, key, configure=False):
@@ -158,6 +284,20 @@ def application_command(db, settings, actor, key, configure=False):
                         "CONFLICT", "Idempotency key belongs to another action.", 409
                     )
                 return previous.result
+            if not configure and unresolved_unlocks(db, settings):
+                audit(
+                    db,
+                    actor,
+                    "TIMED_UNLOCK_REJECTED",
+                    "door-1",
+                    result="DUPLICATE_BLOCKED",
+                )
+                db.commit()
+                raise DomainError(
+                    "CONFLICT",
+                    "A previous Door 1 unlock has an uncertain outcome or remains pending. Observe or reconcile its exact operation before trying again.",
+                    409,
+                )
             db.commit()
             baseline = bridge.start()
             from .hikvision_existing import DEVICE
@@ -173,31 +313,21 @@ def application_command(db, settings, actor, key, configure=False):
             if not door or door.controller_id != settings.hikvision_controller_id:
                 raise WriteBlocked("DOOR_TARGET_UNVERIFIED")
             if not configure:
+                if unresolved_unlocks(db, settings):
+                    raise DomainError(
+                        "CONFLICT", "A previous Door 1 unlock remains unresolved.", 409
+                    )
                 latest = db.scalar(
                     select(Operation)
                     .where(
                         Operation.controller_id == door.controller_id,
                         Operation.target_type == "DOOR",
                         Operation.target_id == door.id,
+                        Operation.desired.in_(UNLOCK_COMMANDS),
                     )
                     .order_by(Operation.created_at.desc())
                     .limit(1)
                 )
-                if latest and latest.status in {"PENDING", "UNCERTAIN"}:
-                    audit(
-                        db,
-                        actor,
-                        "TIMED_UNLOCK_REJECTED",
-                        door.id,
-                        result="DUPLICATE_BLOCKED",
-                    )
-                    db.commit()
-                    raise DomainError(
-                        "CONFLICT",
-                        "A previous Door 1 unlock has an uncertain outcome. "
-                        "Inspect the controller and audit record before trying again.",
-                        409,
-                    )
                 if (
                     latest
                     and latest.status == "CONFIRMED"
@@ -242,6 +372,7 @@ def application_command(db, settings, actor, key, configure=False):
                     "simulated": False,
                     "durationSeconds": 5,
                     "physicalObservationPending": not configure,
+                    "transportStatus": "UNCERTAIN",
                 },
             )
             db.add(op)
@@ -252,6 +383,9 @@ def application_command(db, settings, actor, key, configure=False):
                 "physicalState": "UNKNOWN",
                 "readbackVerified": False,
                 "message": "Outcome uncertain; the command will not be repeated automatically.",
+                "sdkAcknowledged": None,
+                "sdkStatus": "UNKNOWN",
+                "transportStatus": "UNCERTAIN",
             }
             entry = Idempotency(
                 account_id=actor.id,
@@ -268,6 +402,8 @@ def application_command(db, settings, actor, key, configure=False):
                 op.id,
                 result="UNCERTAIN",
             )
+            db.commit()
+            op.data = {**op.data, "sentAt": now().isoformat()}
             db.commit()
             bridge.process.stdin.write((command + "\n").encode())
             bridge.process.stdin.flush()
@@ -303,7 +439,12 @@ def application_command(db, settings, actor, key, configure=False):
                 **op.data,
                 "nativeResult": safe_rows,
                 "readbackVerified": bool(verified),
-                "sdkAcknowledged": bool(result.get("ok")),
+                "sdkAcknowledged": result.get("ok") if len(rows) == 1 else None,
+                "transportStatus": "NOT_SENT"
+                if result.get("sent") is False
+                else "ACKNOWLEDGED"
+                if result.get("ok") is True
+                else "UNCERTAIN",
                 "artifact": save(
                     "application-door-result",
                     {"operationId": op.id, "native": bridge.rows},
@@ -321,6 +462,9 @@ def application_command(db, settings, actor, key, configure=False):
                 else "Controller command is unconfirmed. Inspect the recorded result before any new action.",
             }
             entry.result = output
+            if not configure:
+                output = operation_view(op)
+                entry.result = output
             audit(
                 db,
                 actor,
@@ -361,8 +505,26 @@ def application_command(db, settings, actor, key, configure=False):
                         {"operationId": op.id, "native": bridge.rows},
                     ),
                     "readbackVerified": False,
+                    "transportStatus": "UNCERTAIN",
+                    "transportError": str(exc)
+                    if isinstance(exc, WriteBlocked)
+                    else "NATIVE_IO_FAILED",
+                    "sdkAcknowledged": next(
+                        (
+                            r.get("ok")
+                            for r in bridge.rows
+                            if r.get("kind") == "unlockResult"
+                        ),
+                        None,
+                    ),
                 }
+                if not configure:
+                    entry = db.get(Idempotency, (actor.id, key))
+                    entry.result = operation_view(op)
+                    audit(db, actor, "TIMED_UNLOCK_RESULT", op.id, result="UNCERTAIN")
                 db.commit()
+                if not configure:
+                    return operation_view(op)
             else:
                 audit(
                     db,
@@ -381,43 +543,21 @@ def application_command(db, settings, actor, key, configure=False):
 
 
 def main():
+    from uuid import uuid4
+
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["prepare", "execute"])
     parser.add_argument("--actor-email")
     args = parser.parse_args()
     settings = Settings()
     database = Database(settings)
-    bridge = UnlockBridge(settings)
-    op_id = None
     try:
-        baseline = bridge.start()
-        from .hikvision_existing import DEVICE
-
-        if baseline["device"] != DEVICE:
-            raise WriteBlocked("DESIGNATED_DEVICE_IDENTITY_CHANGED")
-        fields = next((r for r in bridge.rows if r.get("kind") == "doorFields"), {})
-        if args.command == "prepare":
-            bridge.close()
-            artifact = save(
-                "timed-unlock-readonly-preflight",
-                {"baseline": baseline, "doorFields": fields, "native": bridge.rows},
-            )
-            print(
-                {
-                    "door": 1,
-                    "configuredSeconds": fields.get("openDuration"),
-                    "requiredSeconds": 5,
-                    "ready": fields.get("openDuration") == 5,
-                    "controllerWrites": 0,
-                    "artifact": artifact,
-                }
-            )
-            return
-        validate_duration(bridge.rows)  # No intent or physical call if duration fails.
-        if not sys.stdin.isatty() or not args.actor_email:
-            raise WriteBlocked("PRIVATE_AUTHENTICATED_OPERATOR_REQUIRED")
         with database.session() as db:
-            domain_lock(db)
+            if args.command == "prepare":
+                print(application_prepare(settings, db))
+                return
+            if not sys.stdin.isatty() or not args.actor_email:
+                raise WriteBlocked("PRIVATE_AUTHENTICATED_OPERATOR_REQUIRED")
             actor = login_account(
                 db,
                 args.actor_email,
@@ -425,6 +565,7 @@ def main():
                 SimpleNamespace(client=SimpleNamespace(host="local-unlock")),
             )
             require(db, actor, "unlock", settings)
+            db.commit()
             if (
                 input(
                     "Observe Door 1; type ONE FIVE SECOND OPEN to authorize one command: "
@@ -432,66 +573,12 @@ def main():
                 != "ONE FIVE SECOND OPEN"
             ):
                 raise WriteBlocked("PHYSICAL_CONFIRMATION_REQUIRED")
-            door = db.get(Door, "door-1")
-            if not door or door.controller_id != settings.hikvision_controller_id:
-                raise WriteBlocked("DOOR_TARGET_UNVERIFIED")
-            op = Operation(
-                controller_id=door.controller_id,
-                target_type="DOOR",
-                target_id=door.id,
-                desired="UNLOCK",
-                status="UNCERTAIN",
-                attempts=1,
-                actor_id=actor.id,
-                created_at=now(),
-                data={
-                    "simulated": False,
-                    "durationSeconds": 5,
-                    "purpose": "DESIGNATED_TIMED_UNLOCK_ACCEPTANCE",
-                    "physicalObservationPending": True,
-                },
+            print(
+                application_command(db, settings, actor, "local-unlock-" + str(uuid4()))
             )
-            db.add(op)
-            db.flush()
-            op_id = op.id
-            audit(db, actor, "TIMED_UNLOCK_INTENT", op.id, result="UNCERTAIN")
-            db.commit()
-        # Durable UNCERTAIN precedes sending. No retry/replay path exists.
-        bridge.process.stdin.write(b"UNLOCK5\n")
-        bridge.process.stdin.flush()
-        bridge.read()
-        bridge.close()
-        result = [r for r in bridge.rows if r.get("kind") == "unlockResult"]
-        artifact = save(
-            "timed-unlock-result", {"operationId": op_id, "native": bridge.rows}
-        )
-        with database.session() as db:
-            domain_lock(db)
-            op = db.get(Operation, op_id)
-            op.data = {
-                **op.data,
-                "nativeResult": result,
-                "artifact": artifact,
-                "sdkAcknowledged": len(result) == 1 and bool(result[0].get("ok")),
-            }
-            if len(result) == 1 and not result[0].get("sent"):
-                op.status = "FAILED"
-            db.commit()
-        print(
-            {
-                "operationId": op_id,
-                "sdkAcknowledged": len(result) == 1 and bool(result[0].get("ok")),
-                "physicalState": "UNKNOWN",
-                "automaticRetry": False,
-            }
-        )
     finally:
-        bridge.close()
         database.engine.dispose()
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except WriteBlocked as exc:
-        raise SystemExit(str(exc)) from None
+    main()

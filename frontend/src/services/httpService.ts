@@ -83,10 +83,11 @@ export function createHttpService(baseUrl: string): AccessControlService {
   }
   return {
     mode: "http",
-    unlockStatus: () => request("/controller/unlock"),
+    unlockStatus: (operationId) => request("/controller/unlock" + (operationId ? "?operationId=" + encodeURIComponent(operationId) : "")),
     remoteUnlock: () => write("/controller/unlock", { confirmed: true }),
-    confirmPhysicalUnlock: () =>
-      write("/controller/unlock/confirm-physical", { confirmed: true }),
+    confirmPhysicalUnlock: (operationId) =>
+      write("/controller/unlock/confirm-physical", { operationId, confirmed: true }),
+    reconcileUnlock: (operationId, reason) => write("/controller/unlock/reconcile", { operationId, reason, confirmed: true }),
     configureUnlockDuration: () => write("/controller/unlock-duration", { confirmed: true }),
     controllerAccess: () => request("/controller/access"),
     authorizeControllerCards: (cards) => write("/controller/access/authorize", { cards, confirmed: true }),

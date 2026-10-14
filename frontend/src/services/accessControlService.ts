@@ -45,9 +45,10 @@ export interface ControllerCardRead {
 }
 export interface AccessControlService {
   readonly mode: "mock" | "http";
-  unlockStatus(): Promise<{ doorId: string; configuredSeconds: number; requiredSeconds: number; ready: boolean; sensor: string; controllerStatus: string; uncertainOperationId?: string; uncertainMessage?: string }>;
-  remoteUnlock(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; sdkAcknowledged?: boolean; message: string }>;
-  confirmPhysicalUnlock(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
+  unlockStatus(operationId?: string): Promise<{ doorId: string; configuredSeconds: number | null; requiredSeconds: number; ready: boolean; sensor: string; controllerStatus: string; controllerError?: string; unresolvedOperations: UnlockOperation[]; operation?: UnlockOperation }>;
+  remoteUnlock(): Promise<UnlockOperation>;
+  confirmPhysicalUnlock(operationId: string): Promise<UnlockOperation>;
+  reconcileUnlock(operationId: string, reason: string): Promise<UnlockOperation>;
   configureUnlockDuration(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
   controllerAccess(): Promise<ControllerAccess>;
   authorizeControllerCards(cards: { number: string; kind: "PERSONAL" | "VISITOR"; personIds: string[] }[]): Promise<ControllerAccess>;
@@ -93,6 +94,18 @@ export interface AccessControlService {
   cancelScan(id: string): Promise<void>;
   subscribe(listener: () => void): () => void;
   resetDemo(): Promise<void>;
+}
+export interface UnlockOperation {
+  operationId: string;
+  command?: string;
+  status: string;
+  createdAt?: string;
+  readbackVerified: boolean;
+  physicalState: string;
+  sdkAcknowledged?: boolean | null;
+  sdkStatus?: string;
+  transportStatus?: string;
+  message: string;
 }
 export function validEmail(email: string, university = false) {
   const value = email.trim();

@@ -106,6 +106,24 @@ def test_existing_scope_never_automatically_adopts_backlog(env):
         assert "writeEpoch" not in db.scalar(select(Operation)).data
 
 
+def test_existing_scope_stamps_only_designated_card_operations(env):
+    from app.service import AccessService
+    settings,database,accounts,_=env
+    settings.controller_mode="HIKVISION_CONTROLLED"
+    with database.session() as db:
+        card=Card(number="00007123",kind="PERSONAL",disabled=True);db.add(card);db.flush()
+        a=Assignment(card_id=card.id,person_id=accounts["USER"][1],start=now(),expiry=now()+timedelta(days=1),
+                     state="PENDING",sync="PENDING",version=1,created_at=now());db.add(a);db.flush()
+        set_setting(db,"hikvision:write-scope:controller-1",{"enabled":True,"epoch":"designated","kind":"EXISTING_TEMPLATE",
+            "cards":{card.number:{"kind":"PERSONAL","personIds":[accounts["USER"][1]]}}})
+        service=AccessService(db,db.get(Account,accounts["ADMIN"][0]),settings)
+        service.queue("ASSIGNMENT",a.id,"ENABLED",1)
+        service.queue("SCHEDULE","normal","SYNCHRONIZED",1,data={"writeEpoch":"injected"})
+        cardop=db.scalar(select(Operation).where(Operation.target_type=="ASSIGNMENT"))
+        scheduleop=db.scalar(select(Operation).where(Operation.target_type=="SCHEDULE"))
+        assert cardop.data["writeEpoch"]=="designated" and "writeEpoch" not in scheduleop.data
+
+
 def test_scope_rejects_existing_rights_and_admin_identity(env):
     _,database,accounts,_=env
     with database.session() as db:

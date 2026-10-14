@@ -105,6 +105,14 @@ class ControllerExecution(StrictModel):
     confirmed: bool
 
 
+class UnlockObservation(ControllerExecution):
+    operationId: str = Field(min_length=1, max_length=64)
+
+
+class UnlockReconciliation(UnlockObservation):
+    reason: str = Field(min_length=10, max_length=500)
+
+
 class PersonData(StrictModel):
     type: Literal["STUDENT", "STAFF"]
     reference: str = Field(min_length=1, max_length=100)

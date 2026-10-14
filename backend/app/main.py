@@ -50,6 +50,8 @@ from .schemas import (
     CommandUnion,
     ControllerAuthorization,
     ControllerExecution,
+    UnlockObservation,
+    UnlockReconciliation,
     Filters,
     Login,
     RecoveryRequest,
@@ -462,14 +464,14 @@ def create_app(settings=None, database=None):
         return controller_access.status(db, settings)
 
     @app.get("/api/controller/unlock")
-    def controller_unlock_status(request: Request, db: DB):
+    def controller_unlock_status(request: Request, db: DB, operationId: str | None = None):
         from .hikvision_unlock import application_prepare
         actor = actor_for(db, request)
         require(db, actor, "unlock", settings)
         if settings.controller_mode == "SIMULATED":
             raise DomainError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.", 409)
         db.commit()
-        return application_prepare(settings, db)
+        return application_prepare(settings, db, operationId)
 
     @app.post("/api/controller/unlock")
     def controller_unlock(body: ControllerExecution, request: Request, db: DB):
@@ -480,7 +482,7 @@ def create_app(settings=None, database=None):
         return application_command(db, settings, actor, request.headers.get("idempotency-key"))
 
     @app.post("/api/controller/unlock/confirm-physical")
-    def controller_unlock_confirm_physical(body: ControllerExecution, request: Request, db: DB):
+    def controller_unlock_confirm_physical(body: UnlockObservation, request: Request, db: DB):
         from .hikvision_unlock import confirm_physical_unlock
         actor = actor_for(db, request, True)
         if not body.confirmed:
@@ -488,7 +490,15 @@ def create_app(settings=None, database=None):
                 "VALIDATION_ERROR",
                 "Confirm that Door 1 released and returned to its secured state.",
             )
-        return confirm_physical_unlock(db, settings, actor)
+        return confirm_physical_unlock(db, settings, actor, body.operationId)
+
+    @app.post("/api/controller/unlock/reconcile")
+    def controller_unlock_reconcile(body: UnlockReconciliation, request: Request, db: DB):
+        from .hikvision_unlock import confirm_physical_unlock
+        actor = actor_for(db, request, True)
+        if not body.confirmed:
+            raise DomainError("VALIDATION_ERROR", "Confirm Door 1 is currently secured; this does not confirm a past release.")
+        return confirm_physical_unlock(db, settings, actor, body.operationId, secured_only=True, reason=body.reason)
 
     @app.post("/api/controller/unlock-duration")
     def controller_unlock_duration(body: ControllerExecution, request: Request, db: DB):
