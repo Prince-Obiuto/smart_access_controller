@@ -383,7 +383,10 @@ def operation_result(db, result, settings=None):
     ops = [o for o in ops if o]
     if not ops:
         return {k: v for k, v in result.items() if k != "operationIds"}
-    if settings and not settings.controller_writes_available:
+    if settings and not settings.controller_writes_available and not all(
+        o.status == "CONFIRMED" and o.data.get("simulated") is False
+        and o.data.get("readbackVerified") for o in ops
+    ):
         return {
             "intendedState": ops[-1].desired,
             "result": "PENDING",
@@ -400,7 +403,7 @@ def operation_result(db, result, settings=None):
             ],
             "operationIds": ids,
         }
-    controlled = settings and settings.controller_mode == "HIKVISION_CONTROLLED"
+    controlled = settings and settings.controller_mode != "SIMULATED"
 
     def actual_status(o):
         if (

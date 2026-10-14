@@ -231,6 +231,8 @@ CommandTypes = [
         expiry=(str, ...),
     ),
     command("visitor-approve", id=(str, ...), note=(RequiredStr, ...)),
+    command("visitor-request", personId=(str, ...), purpose=(RequiredStr, ...),
+            host=(RequiredStr, ...), start=(str, ...), expiry=(str, ...)),
     command("visitor-assign", id=(str, ...), cardId=(str, ...)),
     command(
         "visitor-return",

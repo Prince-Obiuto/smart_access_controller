@@ -87,7 +87,7 @@ def assignment_view(db, a, read_only=False, settings=None):
     conf = list(
         db.scalars(select(Confirmation).where(Confirmation.assignment_id == a.id))
     )
-    controlled = settings and settings.controller_mode == "HIKVISION_CONTROLLED"
+    controlled = settings and settings.controller_mode != "SIMULATED"
     if controlled:
         from .hikvision_writes import physical_confirmation
 
@@ -371,7 +371,7 @@ def snapshot(db, actor, settings, at=None):
         ]
         return (
             p.sync
-            if settings.controller_mode == "HIKVISION_CONTROLLED"
+            if settings.controller_mode != "SIMULATED"
             and own
             and all(a["sync"] == "SYNCHRONIZED" for a in own)
             else "OUT_OF_SYNC"
@@ -428,8 +428,10 @@ def snapshot(db, actor, settings, at=None):
         },
         "clock": iso(at or now()),
         "controllerMode": settings.controller_mode,
-        # Broad actions (unlock/enrolment) remain unavailable in both real modes.
+        # Broad physical actions remain unavailable; reader capture is GET-only.
         "controllerWritesAvailable": settings.controller_mode == "SIMULATED",
+        "readerEnrolmentAvailable": settings.controller_mode != "SIMULATED",
+        "adminVisitorRequestAvailable": True,
         "controllerTestWritesEnabled": settings.controller_mode
         == "HIKVISION_CONTROLLED"
         and bool(write_scope.get("enabled")),

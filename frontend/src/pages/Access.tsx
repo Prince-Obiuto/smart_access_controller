@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useApp } from "../context";
 import { can } from "../permissions";
@@ -518,13 +518,15 @@ export function RequestList({ own = false }: { own?: boolean }) {
   );
 }
 function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
-  const { data, act, notify } = useApp(),
+  const { data, act } = useApp(),
     [number, setNumber] = useState(
       data.cards.find((c) => c.id === app.cardId)?.number ?? "",
     ),
     [scan, setScan] = useState<ScanSession | null>(null),
     [remaining, setRemaining] = useState(30),
     [error, setError] = useState("");
+  const currentScan = useRef(scan);
+  currentScan.current = scan;
   useEffect(() => {
     if (!scan || !["WAITING", "DETECTED"].includes(scan.state)) return;
     const t = setInterval(() => {
@@ -543,10 +545,11 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
   }, [scan?.id, scan?.state]);
   useEffect(
     () => () => {
-      if (scan && ["WAITING", "DETECTED"].includes(scan.state))
-        void service.cancelScan(scan.id).catch(() => {});
+      const active = currentScan.current;
+      if (active && ["WAITING", "DETECTED", "AMBIGUOUS"].includes(active.state))
+        void service.cancelScan(active.id).catch(() => {});
     },
-    [scan?.id],
+    [],
   );
   return (
     <Modal title="Enrol and issue card" onClose={onClose}>
@@ -578,17 +581,21 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
           />
         </label>
         <div className="button-row">
-          {data.controllerWritesAvailable !== false && (
+          {(data.readerEnrolmentAvailable || data.controllerWritesAvailable !== false) && (
             <Action
               onClick={async () => {
+                setError("");
                 try {
-                  setScan(await service.startScan());
+                  const opened = await service.startScan();
+                  setRemaining(Math.max(0, Math.ceil((Date.parse(opened.expiresAt) - Date.now()) / 1000)));
+                  setScan(opened);
                 } catch (e) {
-                  notify((e as Error).message, true);
+                  setError((e as Error).message);
                 }
               }}
             >
-              Simulate scan card
+              {data.controllerMode === "HIKVISION_READ_ONLY" || data.controllerMode === "HIKVISION_CONTROLLED"
+                ? "Scan real entrance reader" : "Simulate scan card"}
             </Action>
           )}
           <button className="primary" type="submit" disabled={!number.trim()}>
@@ -623,7 +630,7 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
               </Action>
             </>
           )}
-          {["WAITING", "DETECTED"].includes(scan.state) && (
+          {["WAITING", "DETECTED", "AMBIGUOUS"].includes(scan.state) && (
             <Action
               onClick={async () => {
                 await service.cancelScan(scan.id);
@@ -642,7 +649,7 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
       )}
       <small>
         {data.controllerWritesAvailable === false
-          ? "Controller writes and enrolment are unavailable. Saving local intent does not activate a card."
+          ? "Reader capture is read-only. Swipe only the intended card during the bounded scan; saving local intent does not activate it."
           : "Normal access swipes never enrol a card. All scanning and activation are simulated."}
       </small>
     </Modal>

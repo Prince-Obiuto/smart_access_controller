@@ -49,16 +49,19 @@ def brief_card(card):
 
 
 class Bridge:
+    source_name = "hikvision_card_diagnostic.cpp"
     def __init__(self, settings):
         self.settings = settings
         self.process = None
         self.rows = []
+        self.binary = None
 
     def start(self):
         s = self.settings
         binary = ROOT_EVIDENCE / ("card-only-bridge-" + str(uuid4()))
+        self.binary = binary
         header = s.hikvision_sdk_dir / "incEn/HCNetSDK.h"
-        source = ROOT / "backend/native/hikvision_card_diagnostic.cpp"
+        source = ROOT / "backend/native" / self.source_name
         ROOT_EVIDENCE.mkdir(mode=0o700, parents=True, exist_ok=True)
         subprocess.run(["g++", "-std=c++17", "-O2", "-pthread", "-Wall", "-Wextra",
                         "-I", str(header.parent), str(source), "-L", str(s.hikvision_sdk_dir / "lib"),
@@ -67,6 +70,8 @@ class Bridge:
         binary.chmod(0o700)
         values = [s.hikvision_host, str(s.hikvision_port), s.hikvision_username.get_secret_value(),
                   s.hikvision_password.get_secret_value(), str(s.hikvision_sdk_dir / "lib")]
+        if hasattr(self, "scope_cards"):
+            values.append(str(len(self.scope_cards)) + " " + " ".join(self.scope_cards))
         if not values[2] or not values[3]:
             raise WriteBlocked("RUN_CONFIGURE_HIKVISION_PRIVATELY")
         if any(any(c in v for c in "\r\n\0") for v in values):
@@ -122,6 +127,9 @@ class Bridge:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.process.kill(); self.process.wait()
+        if self.binary and (self.process is None or self.process.poll() is not None):
+            self.binary.unlink(missing_ok=True)
+            self.binary = None
 
 
 def snapshot(rows):

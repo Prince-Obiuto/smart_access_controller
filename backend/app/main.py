@@ -55,6 +55,7 @@ from .uploads import save_upload, remove_upload
 from .records import list_records, export_records
 from .retention import run_retention
 from .jobs import worker
+from .enrolment import start_real, poll_real, confirm_real
 
 
 class BodyLimit:
@@ -586,12 +587,10 @@ def create_app(settings=None, database=None):
         actor = actor_for(db, request, True)
         require(db, actor, "issue", settings)
         if settings.controller_mode != "SIMULATED":
-            raise DomainError(
-                "NOT_CONNECTED", "Enrolment unavailable in read-only mode.", 409
-            )
-        scan = Enrolment(
-            actor_id=actor.id, state="WAITING", expires_at=now() + timedelta(seconds=30)
-        )
+            domain_lock(db)
+            scan = start_real(db, actor, settings)
+        else:
+            scan = Enrolment(actor_id=actor.id, state="WAITING", expires_at=now() + timedelta(seconds=30))
         db.add(scan)
         db.flush()
         audit(db, actor, "SCAN_STARTED", scan.id)
@@ -601,16 +600,13 @@ def create_app(settings=None, database=None):
     @app.get("/api/enrolment-sessions/{id}")
     def scan_poll(id: str, request: Request, db: DB):
         actor = actor_for(db, request)
-        if settings.controller_mode != "SIMULATED":
-            raise DomainError(
-                "NOT_CONNECTED",
-                "Simulated enrolment unavailable in read-only mode.",
-                409,
-            )
         scan = scan_get(db, actor, id)
-        if scan.state == "WAITING":
+        if settings.controller_mode != "SIMULATED":
+            poll_real(db, scan)
+        elif scan.state == "WAITING":
             scan.state = "DETECTED"
             scan.number = "00" + str(secrets.randbelow(10**10)).zfill(10)
+        db.commit()
         return scan_view(scan)
 
     @app.post("/api/enrolment-sessions/{id}/{action}")
@@ -618,11 +614,11 @@ def create_app(settings=None, database=None):
         id: str, action: Literal["confirm", "cancel"], request: Request, db: DB
     ):
         actor = actor_for(db, request, True)
-        if action == "confirm" and settings.controller_mode != "SIMULATED":
-            raise DomainError(
-                "NOT_CONNECTED", "Enrolment unavailable in read-only mode.", 409
-            )
         scan = scan_get(db, actor, id)
+        if action == "cancel" and scan.state not in {"WAITING", "DETECTED", "AMBIGUOUS"}:
+            return {"ok": True}
+        if action == "confirm" and settings.controller_mode != "SIMULATED":
+            confirm_real(db, scan)
         if action == "confirm" and scan.state != "DETECTED":
             raise DomainError("CONFLICT", "Scan expired, cancelled or not detected.")
         scan.state = "CONFIRMED" if action == "confirm" else "CANCELLED"

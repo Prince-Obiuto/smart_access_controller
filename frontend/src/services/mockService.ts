@@ -851,8 +851,10 @@ export class MockService implements AccessControlService {
         }
         break;
       }
+      case "visitor-request":
       case "visit": {
-        const p = this.person(actor.personId);
+        if (c.type === "visitor-request") this.require("visitors");
+        const p = this.person(c.type === "visitor-request" ? c.personId : actor.personId);
         if (p.type !== "VISITOR")
           throw new ServiceError(
             "FORBIDDEN",

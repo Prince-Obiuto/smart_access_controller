@@ -7,3 +7,4 @@
 - Inspect existing code before modifying it. Preserve local work.
 - Components use the typed service boundary; enforce permissions in services as well as UI.
 - Do not publish, deploy, push or create a remote without an explicit request.
+- Always clean up codes and files not in use and leave the project clean.

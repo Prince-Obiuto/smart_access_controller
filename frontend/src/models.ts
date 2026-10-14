@@ -191,6 +191,8 @@ export interface Snapshot {
   controllerTestWritesEnabled?: boolean;
   controllerWriteMessage?: string;
   controllerWritesAvailable?: boolean;
+  readerEnrolmentAvailable?: boolean;
+  adminVisitorRequestAvailable?: boolean;
   controllerReadStatus?:
     "SIMULATED" | "BLOCKED" | "CONNECTED" | "CONNECTING" | "FAILED";
   controllerReadMessage?: string;
@@ -253,7 +255,7 @@ export interface OperationResult {
 }
 export interface ScanSession {
   id: string;
-  state: "WAITING" | "DETECTED" | "CANCELLED" | "CONFIRMED" | "TIMED_OUT";
+  state: "WAITING" | "DETECTED" | "AMBIGUOUS" | "CANCELLED" | "CONFIRMED" | "TIMED_OUT";
   expiresAt: string;
   number?: string;
 }
@@ -286,6 +288,7 @@ export type Command =
       expiry: string;
     }
   | { type: "visitor-approve"; id: string; note: string }
+  | { type: "visitor-request"; personId: string; purpose: string; host: string; start: string; expiry: string }
   | { type: "visitor-assign"; id: string; cardId: string }
   | {
       type: "visitor-return";

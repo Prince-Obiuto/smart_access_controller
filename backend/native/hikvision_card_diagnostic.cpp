@@ -40,11 +40,25 @@ static bool stage(const char *name, BOOL ok) {
          ",\"error\":" + std::to_string(error) + "}");
     return ok;
 }
+#ifndef IFT_NO_DIAGNOSTIC_MAIN
 int main() {
     rlimit core{0,0}; setrlimit(RLIMIT_CORE, &core);
     std::string host, port, username, password, lib;
     for (auto *v : {&host, &port, &username, &password, &lib})
         if (!std::getline(std::cin, *v)) return 2;
+#ifdef IFT_EXISTING_TEMPLATE
+    std::string scope_line;
+    if (!std::getline(std::cin, scope_line)) return 2;
+    std::istringstream scope_input(scope_line);
+    unsigned count = 0; scope_input >> count;
+    std::vector<std::string> test_cards;
+    if (!scope_input || count < 1 || count > 4) return 2;
+    for (unsigned i=0;i<count;++i) {
+        std::string card; scope_input >> card;
+        if (!scope_input || !card_number(card) || card=="1051305927" || card=="1052625607" || card=="1050853895") return 2;
+        test_cards.push_back(card);
+    }
+#endif
     NET_DVR_LOCAL_SDK_PATH path{}; NET_DVR_USER_LOGIN_INFO login{};
     if (host.size() >= sizeof(login.sDeviceAddress) ||
         username.size() >= sizeof(login.sUserName) || password.size() >= sizeof(login.sPassword) ||
@@ -122,10 +136,22 @@ int main() {
     emit("{\"kind\":\"ready\"}");
     std::string command;
     if (std::getline(std::cin,command) && command != "QUIT") {
-        std::istringstream parse(command); std::string name, card; unsigned enabled;
-        parse >> name >> card >> enabled;
+        std::istringstream parse(command); std::string name, card; unsigned enabled=0;
+#ifdef IFT_EXISTING_TEMPLATE
+        if (parse >> name >> card && name=="READ") {
+            if (std::find(test_cards.begin(),test_cards.end(),card)!=test_cards.end())
+                card_request(user,4,card,nullptr,3000);
+            else permission_end(4,"SCOPE_BLOCKED");
+        } else {
+            parse.clear(); parse.str(command);
+#endif
+#ifndef IFT_EXISTING_TEMPLATE
         const std::vector<std::string> test_cards{"1051305927","1052625607","1052815031"};
-        if(name!="CARD" || enabled>1 || (card=="1052815031" && enabled) ||
+#endif
+        if(!(parse >> name >> card >> enabled) || name!="CARD" || enabled>1 ||
+#ifndef IFT_EXISTING_TEMPLATE
+           (card=="1052815031" && enabled) ||
+#endif
            std::find(test_cards.begin(),test_cards.end(),card)==test_cards.end()) {
             permission_end(3,"SCOPE_BLOCKED");
         } else {
@@ -137,8 +163,12 @@ int main() {
             permission_command(user,"CARD_WRITE",input,3000);
             card_request(user,4,card,nullptr,3000); // fresh separate final GET
         }
+#ifdef IFT_EXISTING_TEMPLATE
+        }
+#endif
     }
     bool logout = stage("logout", NET_DVR_Logout(user));
     bool cleanup = stage("cleanup", NET_DVR_Cleanup());
     return logout && cleanup ? 0 : 2;
 }
+#endif

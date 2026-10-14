@@ -105,6 +105,7 @@ class AccessService:
                         {"writeEpoch": scope["epoch"]}
                         if self.settings.controller_mode == "HIKVISION_CONTROLLED"
                         and scope.get("enabled")
+                        and scope.get("kind") != "EXISTING_TEMPLATE"
                         else {}
                     ),
                 },
@@ -572,8 +573,10 @@ class AccessService:
                         ],
                     },
                 )
-        elif t == "visit":
-            p = self.person(self.actor.person_id)
+        elif t in {"visit", "visitor-request"}:
+            if t == "visitor-request":
+                self.need("visitors")
+            p = self.person(c["personId"] if t == "visitor-request" else self.actor.person_id)
             if p.kind != "VISITOR":
                 raise DomainError("FORBIDDEN", "Visitor accounts only.", 403)
             if p.access_ended_at:

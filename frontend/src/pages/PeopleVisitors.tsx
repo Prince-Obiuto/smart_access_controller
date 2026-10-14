@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../context";
+import { service } from "../services";
+import { lagosDate, lagosDateTime, administrativeDate } from "../dates";
 import type { Person, Visit } from "../models";
 import { Heading } from "./Access";
 import {
@@ -64,9 +66,9 @@ export function People() {
               </small>
               <dl>
                 <dt>Starts</dt>
-                <dd>{p.start ?? "Not set"}</dd>
+                <dd>{lagosDateTime(p.start)}</dd>
                 <dt>Expires</dt>
-                <dd>{p.expiry ?? "Not set"}</dd>
+                <dd>{lagosDateTime(p.expiry)}</dd>
                 <dt>Date sync</dt>
                 <dd>
                   <Badge value={p.sync} />
@@ -155,14 +157,14 @@ export function People() {
                 label: "Access start date · Lagos",
                 type: "date",
                 required: false,
-                value: edit === "new" ? "" : edit.start?.slice(0, 10),
+                value: edit === "new" ? "" : lagosDate(edit.start),
               },
               {
                 name: "expiry",
                 label: "Access expiry date · Lagos",
                 type: "date",
                 required: false,
-                value: edit === "new" ? "" : edit.expiry?.slice(0, 10),
+                value: edit === "new" ? "" : lagosDate(edit.expiry),
               },
             ]}
             onSubmit={async (d) => {
@@ -179,12 +181,8 @@ export function People() {
                   phone: text(d, "phone"),
                   department: text(d, "department"),
                   status: text(d, "status") as Person["status"],
-                  start: text(d, "start")
-                    ? text(d, "start") + "T00:00:00+01:00"
-                    : undefined,
-                  expiry: text(d, "expiry")
-                    ? text(d, "expiry") + "T00:00:00+01:00"
-                    : undefined,
+                  start: administrativeDate(text(d, "start"), edit === "new" ? undefined : edit.start),
+                  expiry: administrativeDate(text(d, "expiry"), edit === "new" ? undefined : edit.expiry),
                 },
               });
               setEdit(null);
@@ -199,12 +197,14 @@ export function Visitors() {
   const { data, act } = useApp(),
     [approval, setApproval] = useState<Visit | null>(null),
     [assign, setAssign] = useState<Visit | null>(null),
-    [checkout, setCheckout] = useState<Visit | null>(null);
+    [checkout, setCheckout] = useState<Visit | null>(null),
+    [requestVisit, setRequestVisit] = useState(false);
   return (
     <>
       <Heading
         title="Visitors"
         description="Individual visitor accounts. Reusable cards, safely returned."
+        action={service.mode === "http" && data.adminVisitorRequestAvailable ? <button className="primary" onClick={() => setRequestVisit(true)}>Request on behalf of visitor</button> : undefined}
       />
       <div className="callout">
         An Exit swipe records departure only. Physical card return and confirmed
@@ -231,9 +231,9 @@ export function Visitors() {
                   {v.purpose} · Host: {v.host}
                 </p>
                 <p>
-                  {v.start}
+                  {lagosDateTime(v.start)}
                   <br />
-                  {v.expiry}
+                  {lagosDateTime(v.expiry)}
                 </p>
                 {v.approval && (
                   <p className="callout">
@@ -295,6 +295,19 @@ export function Visitors() {
         })}
       </div>
       {!data.visits.length && <Empty />}
+      {requestVisit && <Modal title="Request on behalf of visitor" onClose={() => setRequestVisit(false)}>
+        <p>This creates a request only. Record genuine external approval separately before assigning a card.</p>
+        <FormFields fields={[
+          {name: "personId", label: "Visitor", options: data.people.filter(p => p.type === "VISITOR" && p.status === "ACTIVE" && !p.accessEndedAt).map(p => ({value: p.id, label: p.firstName + " " + p.lastName}))},
+          {name: "purpose", label: "Purpose"}, {name: "host", label: "Host / department"},
+          {name: "start", label: "Start · Africa/Lagos", type: "datetime-local"},
+          {name: "expiry", label: "Expiry · Africa/Lagos", type: "datetime-local"},
+        ]} submit="Create request" onSubmit={async d => {
+          await act({type: "visitor-request", personId: text(d,"personId"), purpose: text(d,"purpose"), host: text(d,"host"),
+            start: text(d,"start") + ":00+01:00", expiry: text(d,"expiry") + ":00+01:00"});
+          setRequestVisit(false);
+        }} />
+      </Modal>}
       <h2 className="section-title">Permanent visitor card pool</h2>
       <div className="record-grid">
         {data.cards

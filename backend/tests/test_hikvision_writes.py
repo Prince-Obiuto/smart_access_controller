@@ -142,6 +142,15 @@ def test_activation_does_not_drain_backlog_and_readback_confirms(env, png, monke
     assert snap["assignments"][0]["confirmations"][0]["confirmed"]
     assert snap["controllerTestWritesEnabled"] and not snap["controllerWritesAvailable"]
     cmd(admin, {"type": "unlock", "doorId": "door-1", "confirmed": True}, 409)
+    # Read-only controls must not erase independently stored real write proof.
+    previous_calls = list(FakeTransport.calls)
+    settings.controller_mode = "HIKVISION_READ_ONLY"
+    snap = admin.get("/api/workspace").json()
+    assert snap["assignments"][0]["confirmations"][0]["confirmed"]
+    assert snap["assignments"][0]["confirmations"][0]["simulated"] is False
+    with database.session() as db:
+        process_operations(db, settings)
+    assert FakeTransport.calls == previous_calls
 
 
 def test_ambiguous_send_reconciles_without_replaying(env, png, monkeypatch):

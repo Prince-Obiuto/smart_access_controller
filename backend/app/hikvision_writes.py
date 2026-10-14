@@ -59,6 +59,10 @@ def physical_confirmation(db, assignment, confirmation):
     if not proven or op.desired == "DISABLED":
         return proven
     intent = op.data.get("intent", {})
+    if intent.get("existingTemplate"):
+        scope = get_setting(db, scope_key(op.controller_id))
+        return bool(op.data.get("existingTemplateBaselineHash") == digest(scope.get("baseline", {}).get("resources", {}))
+                    and op.data.get("protectedReadbackVerified"))
     if intent.get("privileged"):
         return True
     schedule = db.get(Schedule, "normal")
@@ -80,6 +84,10 @@ def current_intent(db, op, scope, at):
     """Re-evaluate current records; old queued ENABLE is never authoritative."""
     if op.data.get("writeEpoch") != scope.get("epoch") or not scope.get("enabled"):
         raise WriteBlocked("ACTIVATION_REVIEW_REQUIRED")
+    existing = scope.get("kind") == "EXISTING_TEMPLATE"
+    if existing:
+        from .hikvision_existing import check_operation
+        check_operation(db, op, scope, at)
     if op.target_type == "SCHEDULE":
         schedule = db.get(Schedule, "normal")
         if not schedule or schedule.version != op.version:
@@ -189,6 +197,8 @@ def current_intent(db, op, scope, at):
                 )
             ],
         )
+    if existing:
+        result.update(existingTemplate=scope["existingTemplate"], scheduleBaselineHash=digest(scope["baseline"]["resources"]))
     return result
 
 
@@ -469,7 +479,12 @@ def reconcile(transport, intent, scope, before_write, resource_confirmed):
     plan = None
     if intent["kind"] == "SCHEDULE" or intent.get("enabled"):
         transport.verify_ownership()
-        resources, plan = compile_schedule(intent, scope)
+        if scope.get("kind") == "EXISTING_TEMPLATE":
+            if intent["kind"] != "CARD" or intent.get("privileged"):
+                raise WriteBlocked("EXISTING_TEMPLATE_CARD_ONLY")
+            resources, plan = [], scope["existingTemplate"]
+        else:
+            resources, plan = compile_schedule(intent, scope)
         for kind, number, expected in resources:
             key = kind + ":" + str(number)
             baseline = scope.get("resources", {}).get(key)
@@ -493,24 +508,31 @@ def reconcile(transport, intent, scope, before_write, resource_confirmed):
     if intent["kind"] == "SCHEDULE":
         return {"scheduleHash": digest(intent), "readbackVerified": True}
     actual = transport.read_card(intent["card"])
-    if not card_matches(actual, intent, plan):
+    matches = getattr(transport, "matches_card", card_matches)
+    if not matches(actual, intent, plan):
         before_write("CARD", intent)
         transport.write_card(intent, plan)
         actual = transport.read_card(intent["card"])
-        if not card_matches(actual, intent, plan):
+        if not matches(actual, intent, plan):
             raise WriteBlocked("CARD_READBACK_MISMATCH")
     return {
         "cardHash": digest(actual),
         "scheduleHash": digest(intent.get("schedule")),
         "readbackVerified": True,
+        **(transport.evidence() if hasattr(transport, "evidence") else {}),
     }
 
 
-def process_controlled(db, settings, at=None, transport_factory=None):
+def process_controlled(db, settings, at=None, transport_factory=None, operation_id=None):
     if settings.controller_mode != "HIKVISION_CONTROLLED":
         return
     at = at or now()
-    transport_factory = transport_factory or PermissionTransport
+    if transport_factory is None:
+        def transport_factory(config, scope):
+            if scope.get("kind") == "EXISTING_TEMPLATE":
+                from .hikvision_existing import ExistingTemplateTransport
+                return ExistingTemplateTransport(config, scope)
+            return PermissionTransport(config, scope)
     controller_id = settings.hikvision_controller_id
     # Separate session-level lock, held on a pinned connection across commits.
     # It never blocks workflow/event transactions while native I/O is running.
@@ -539,6 +561,7 @@ def process_controlled(db, settings, at=None, transport_factory=None):
                         Operation.data["writeEpoch"].as_string() == scope["epoch"],
                         Operation.status.in_(["PENDING", "UNCERTAIN", "FAILED"]),
                         Operation.attempts < 5,
+                        *([Operation.id == operation_id] if operation_id else []),
                     )
                     .order_by(
                         case((Operation.desired == "DISABLED", 0), else_=1),
@@ -671,6 +694,10 @@ def process_controlled(db, settings, at=None, transport_factory=None):
                     "message": "Device permissions verified by SDK readback",
                     "confirmedState": op.desired,
                 }
+                if scope.get("kind") == "EXISTING_TEMPLATE":
+                    active_scope = get_setting(db, scope_key(controller_id))
+                    active_scope["lastRecords"] = {**active_scope.get("lastRecords", {}), intent["card"]: evidence.get("actualRecord")}
+                    set_setting(db, scope_key(controller_id), active_scope)
                 if op.target_type == "ASSIGNMENT":
                     assignment = db.get(Assignment, op.target_id)
                     confirmation = db.scalar(
@@ -775,6 +802,11 @@ def process_controlled(db, settings, at=None, transport_factory=None):
                         now() + timedelta(seconds=min(300, 5 * 2**op.attempts))
                     ),
                 }
+                if hasattr(transport, "failure_evidence"):
+                    try:
+                        op.data = {**op.data, **transport.failure_evidence(code)}
+                    except OSError:
+                        op.data = {**op.data, "failureArtifactUnavailable": True}
                 if code in {
                     "AUTHENTICATION_FAILED",
                     "ACCOUNT_LOCKED",
