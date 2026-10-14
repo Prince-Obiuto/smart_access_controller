@@ -20,7 +20,7 @@ from app.jobs import collect_real, close_real
 from app.hikvision_mapping import verify_mapping
 from app.models import AccessEvent, Assignment
 from test_hikvision import config
-from conftest import issued, session_client
+from conftest import cmd, issued, session_client
 
 
 def frame(**changes):
@@ -147,6 +147,82 @@ class FakeSession:
 
     def close(self):
         pass
+
+
+def test_restart_backfill_after_visitor_reuse_keeps_event_time_owner(env):
+    """Synthetic SDK delivery only: no physical expiry or swipe is implied."""
+    from test_visitors_retention import assigned_visitor, visitor
+
+    settings, database, _, _ = env
+    first, admin, first_visit, card_id = assigned_visitor(env)
+    first_assignment = first.get("/api/workspace").json()["assignments"][0]
+    first_at = now()
+    earlier = event(
+        time=list(first_at.timetuple()[:6]),
+        timeType=1,
+        serial=7100,
+        cardHex=(b"00004000" + bytes(24)).hex(),
+    )
+    earlier["at"] = first_at
+
+    # A callback was already committed before shutdown. History may deliver it
+    # again after return/reassignment, alongside an event collected while down.
+    with database.session() as db:
+        original_id = store_real_event(db, earlier, "controller-1")
+        set_setting(
+            db,
+            "backfill:HIKVISION_CONTROLLED:controller-1",
+            {"at": (first_at - timedelta(minutes=2)).isoformat()},
+        )
+        db.commit()
+    cmd(
+        admin,
+        {"type": "visitor-return", "id": first_visit, "returned": True, "condition": "GOOD"},
+    )
+    second, visit = visitor(env, "Second")
+    cmd(
+        admin,
+        {"type": "visitor-approve", "id": visit["id"], "note": "Synthetic fixture approval"},
+    )
+    cmd(admin, {"type": "visitor-assign", "id": visit["id"], "cardId": card_id})
+    second_assignment = second.get("/api/workspace").json()["assignments"][0]
+    second_at = now()
+    later = event(
+        time=list(second_at.timetuple()[:6]),
+        timeType=1,
+        serial=7101,
+        cardHex=(b"00004000" + bytes(24)).hex(),
+    )
+    later["at"] = second_at
+    recovered_at = second_at + timedelta(seconds=5)
+    earlier["received_at"] = later["received_at"] = recovered_at
+
+    # A fresh session represents restart. Live/history overlap must not create
+    # duplicates or transfer the old visitor's event to the new holder.
+    settings.controller_mode = "HIKVISION_CONTROLLED"
+    session = FakeSession([earlier, later], live=[earlier, later])
+    collect_real(database, settings, SimpleNamespace(session=session), at=recovered_at)
+    collect_real(
+        database,
+        settings,
+        SimpleNamespace(session=FakeSession([earlier, later], live=[later])),
+        at=recovered_at,
+    )
+    with database.session() as db:
+        rows = list(db.scalars(select(AccessEvent).order_by(AccessEvent.at)))
+        assert len(rows) == 2 and all(not row.simulated for row in rows)
+        assert rows[0].id == original_id
+        assert rows[0].assignment_id == first_assignment["id"]
+        assert rows[0].person == "First Visitor"
+        assert rows[1].assignment_id == second_assignment["id"]
+        assert rows[1].person == "Second Visitor"
+        assert rows[1].received_at == recovered_at
+        assert all(row.result == "GRANTED" for row in rows)
+        assert (
+            get_setting(db, "backfill:HIKVISION_CONTROLLED:controller-1")["at"]
+            == recovered_at.isoformat()
+        )
+    assert not session.live
 
 
 @pytest.mark.parametrize("complete", [False, True])

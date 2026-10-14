@@ -179,6 +179,14 @@ def main():
                             settings.smtp_password.get_secret_value(),
                         )
                     client.noop()
+            except smtplib.SMTPAuthenticationError as exc:
+                raise SystemExit(
+                    f"SMTP authentication rejected (code {exc.smtp_code}); check provider access policy and private SMTP credentials. No message sent or credentials printed."
+                ) from None
+            except ssl.SSLError:
+                raise SystemExit(
+                    "SMTP TLS verification failed; no message sent or credentials printed."
+                ) from None
             except (OSError, smtplib.SMTPException):
                 raise SystemExit(
                     "SMTP connection/authentication failed; no message sent or credentials printed."

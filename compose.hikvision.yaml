@@ -5,6 +5,7 @@ services:
       HIKVISION_BRIDGE_PATH: /opt/hikvision-bin/ift-hikvision
       HIKVISION_EVIDENCE_DIR: /data/controller-evidence/card-diagnostic
     volumes:
+      - controller_evidence:/data/controller-evidence
       - type: bind
         source: ${HIKVISION_SDK_DIR:?Configure the extracted official SDK path}
         target: /opt/hikvision-sdk
@@ -17,3 +18,8 @@ services:
         read_only: true
         bind:
           create_host_path: false
+
+volumes:
+  controller_evidence:
+    external: true
+    name: ift-access_controller_evidence

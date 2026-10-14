@@ -243,3 +243,46 @@ def test_smtp_message_fixture(env, monkeypatch):
     assert observed["tls"] and observed["timeout"] == 8
     assert observed["message"]["To"] == "visitor@example.test"
     assert "Single-use fixture link" in observed["message"].get_content()
+
+
+@pytest.mark.parametrize("failure", ["authentication", "tls"])
+def test_private_mail_check_reports_category_without_server_reply(env, monkeypatch, capsys, failure):
+    import smtplib
+    import ssl
+    from pydantic import SecretStr
+    from app import cli
+
+    settings = env[0]
+    settings.smtp_host, settings.smtp_from = "local-fixture", "ift@example.test"
+    settings.smtp_username = SecretStr("private-fixture-user")
+    settings.smtp_password = SecretStr("private-fixture-password")
+    private_reply = "Do not expose private-fixture-password or reset-token-fixture"
+
+    class RejectedSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def starttls(self, context):
+            if failure == "tls":
+                raise ssl.SSLError(private_reply)
+
+        def login(self, *args):
+            raise smtplib.SMTPAuthenticationError(525, private_reply.encode())
+
+    monkeypatch.setattr(cli, "Settings", lambda: settings)
+    monkeypatch.setattr(cli, "Database", lambda _: env[1])
+    monkeypatch.setattr(mail.smtplib, "SMTP", RejectedSMTP)
+    monkeypatch.setattr("sys.argv", ["ift", "check-recovery-mail"])
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+    message = str(error.value)
+    assert ("authentication rejected (code 525)" if failure == "authentication" else "TLS verification failed") in message
+    output = capsys.readouterr()
+    assert "private-fixture" not in message + output.out + output.err
+    assert "reset-token-fixture" not in message + output.out + output.err
