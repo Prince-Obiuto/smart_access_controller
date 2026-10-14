@@ -11,7 +11,7 @@ test("reader scan stays open and preserves confirmation when dialog closes", asy
     schedule: { weekdays: [1, 2, 3, 4, 5], opens: "07:00", closes: "18:30", exceptions: [], sync: "PENDING" },
     settings: { payment: "Synthetic", uploadLimit: 1024 },
     controls: { offline: false, failDisable: false, delayActivation: false, unlockTimeout: false },
-    controllerMode: "HIKVISION_READ_ONLY", controllerWritesAvailable: false,
+    controllerMode: "HIKVISION_CONTROLLED", controllerWritesAvailable: false,
     readerEnrolmentAvailable: true, controllerReadStatus: "CONNECTED",
   };
   let starts = 0, cancellations = 0, detected = false;

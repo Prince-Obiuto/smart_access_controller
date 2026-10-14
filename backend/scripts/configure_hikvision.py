@@ -43,7 +43,7 @@ def configure(path, prepare=False):
         set_key(path, "HIKVISION_USERNAME", username, quote_mode="always")
         set_key(path, "HIKVISION_PASSWORD", password, quote_mode="always")
     # Explicitly selecting this script prepares the safe mode, never SDK writes.
-    set_key(path, "CONTROLLER_MODE", "HIKVISION_READ_ONLY", quote_mode="always")
+    set_key(path, "CONTROLLER_MODE", "HIKVISION_CONTROLLED", quote_mode="always")
     set_key(path, "SIMULATION_CONTROLS_ENABLED", "false", quote_mode="always")
     path.chmod(0o600)
     print(

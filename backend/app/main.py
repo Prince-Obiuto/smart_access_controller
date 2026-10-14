@@ -469,7 +469,7 @@ def create_app(settings=None, database=None):
         if settings.controller_mode == "SIMULATED":
             raise DomainError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.", 409)
         db.commit()
-        return application_prepare(settings)
+        return application_prepare(settings, db)
 
     @app.post("/api/controller/unlock")
     def controller_unlock(body: ControllerExecution, request: Request, db: DB):
@@ -478,6 +478,17 @@ def create_app(settings=None, database=None):
         if not body.confirmed:
             raise DomainError("VALIDATION_ERROR", "Confirm one five-second Door 1 release.")
         return application_command(db, settings, actor, request.headers.get("idempotency-key"))
+
+    @app.post("/api/controller/unlock/confirm-physical")
+    def controller_unlock_confirm_physical(body: ControllerExecution, request: Request, db: DB):
+        from .hikvision_unlock import confirm_physical_unlock
+        actor = actor_for(db, request, True)
+        if not body.confirmed:
+            raise DomainError(
+                "VALIDATION_ERROR",
+                "Confirm that Door 1 released and returned to its secured state.",
+            )
+        return confirm_physical_unlock(db, settings, actor)
 
     @app.post("/api/controller/unlock-duration")
     def controller_unlock_duration(body: ControllerExecution, request: Request, db: DB):

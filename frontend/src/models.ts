@@ -190,7 +190,7 @@ export interface DemoControls {
   unlockTimeout: boolean;
 }
 export interface Snapshot {
-  controllerMode?: "SIMULATED" | "HIKVISION_READ_ONLY" | "HIKVISION_CONTROLLED";
+  controllerMode?: "SIMULATED" | "HIKVISION_CONTROLLED";
   controllerTestWritesEnabled?: boolean;
   controllerWriteMessage?: string;
   controllerWritesAvailable?: boolean;

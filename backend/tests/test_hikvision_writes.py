@@ -6,17 +6,26 @@ import pytest
 from sqlalchemy import select
 
 from app.common import set_setting
-from app.models import Operation, Assignment, Card, Confirmation, Notification
+from app.models import (
+    Application,
+    Assignment,
+    Card,
+    Confirmation,
+    Notification,
+    Operation,
+)
 from app.operations import process_operations
 from app.hikvision_writes import (
     digest,
     scope_key,
+    device_card_expiry,
     compile_schedule,
     card_matches,
     reconcile,
     WriteBlocked,
     process_controlled,
 )
+from datetime import datetime, timezone
 from app.hikvision_control import activate
 from app.controllers import ControllerReadUnavailable
 from conftest import approved, cmd, issued
@@ -40,6 +49,20 @@ def scope():
             "TEMPLATE:3": digest(empty_template),
         },
     }, {("WEEK", 3): empty_week, ("TEMPLATE", 3): empty_template}
+
+
+def test_device_card_expiry_uses_last_inclusive_second():
+    expiry = datetime(2026, 12, 30, 23, 0, tzinfo=timezone.utc)
+
+    assert device_card_expiry(expiry) == [2026, 12, 30, 23, 59, 59]
+
+
+def test_device_card_expiry_intent_is_list_and_range_check_safe():
+    expiry = datetime(2026, 12, 30, 23, 0, tzinfo=timezone.utc)
+    converted = device_card_expiry(expiry)
+
+    assert isinstance(converted, list)
+    assert converted[-1] == 59
 
 
 class FakeTransport:
@@ -144,13 +167,44 @@ def test_activation_does_not_drain_backlog_and_readback_confirms(env, png, monke
     cmd(admin, {"type": "unlock", "doorId": "door-1", "confirmed": True}, 409)
     # Read-only controls must not erase independently stored real write proof.
     previous_calls = list(FakeTransport.calls)
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     snap = admin.get("/api/workspace").json()
     assert snap["assignments"][0]["confirmations"][0]["confirmed"]
     assert snap["assignments"][0]["confirmations"][0]["simulated"] is False
     with database.session() as db:
         process_operations(db, settings)
     assert FakeTransport.calls == previous_calls
+
+
+def test_new_assignment_in_existing_template_scope_is_released_to_writer(
+    env, png
+):
+    settings, database, admin, application_id = approved(env, png)
+    settings.controller_mode = "HIKVISION_CONTROLLED"
+    with database.session() as db:
+        set_setting(
+            db,
+            scope_key("controller-1"),
+            {
+                "enabled": True,
+                "epoch": "existing-template-epoch",
+                "kind": "EXISTING_TEMPLATE",
+                "existingTemplate": 3,
+                "cards": {},
+            },
+        )
+        db.commit()
+
+    result = cmd(admin, {"type": "issue", "id": application_id, "number": "00000043"})
+    with database.session() as db:
+        application = db.get(Application, application_id)
+        operation = db.scalar(
+            select(Operation).where(Operation.target_id == application.assignment_id)
+        )
+        assert operation
+        assert operation.data["writeEpoch"] == "existing-template-epoch"
+        assert application.state == "ISSUANCE_PENDING"
+        assert result["result"] == "PENDING"
 
 
 def test_ambiguous_send_reconciles_without_replaying(env, png, monkeypatch):
@@ -219,7 +273,7 @@ def test_readonly_blocks_permission_protocol_even_with_scoped_settings(tmp_path)
     from app.hikvision import NativeSession
 
     session = NativeSession(
-        ControllerSettings(_env_file=None, controller_mode="HIKVISION_READ_ONLY"),
+        ControllerSettings(_env_file=None, controller_mode="HIKVISION_CONTROLLED"),
         permissions=True,
     )
     for command in ["AUTHORIZE", "CARD_WRITE", "PLAN_WRITE"]:

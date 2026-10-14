@@ -14,7 +14,7 @@ from .models import (
     Account,
 )
 from .common import get_setting, set_setting, audit, notify, now, iso
-from .controllers import adapter_for, READ_ONLY_MESSAGE
+from .controllers import adapter_for
 from .service import AccessService, ENDED
 from .security import DomainError
 from .db import domain_lock

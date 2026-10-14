@@ -24,7 +24,7 @@ def main(argv=None):
     database = adapter = None
     try:
         settings = Settings()
-        if settings.controller_mode != "HIKVISION_READ_ONLY":
+        if settings.controller_mode == "SIMULATED":
             print(
                 json.dumps(
                     {"code": "READ_ONLY_MODE_REQUIRED", "deviceWritesAllowed": False}
@@ -48,7 +48,7 @@ def main(argv=None):
             )
             state = get_setting(db, "hikvision:" + settings.hikvision_controller_id)
             checkpoint = get_setting(
-                db, "backfill:HIKVISION_READ_ONLY:" + settings.hikvision_controller_id
+                db, "backfill:HIKVISION_CONTROLLED:" + settings.hikvision_controller_id
             )
         print(
             json.dumps(

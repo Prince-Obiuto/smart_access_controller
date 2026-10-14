@@ -11,9 +11,7 @@ class ControllerSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ROOT / ".env", extra="ignore", hide_input_in_errors=True
     )
-    controller_mode: Literal[
-        "SIMULATED", "HIKVISION_READ_ONLY", "HIKVISION_CONTROLLED"
-    ] = "SIMULATED"
+    controller_mode: Literal["SIMULATED", "HIKVISION_CONTROLLED"] = "SIMULATED"
     hikvision_host: str = "10.10.20.8"
     hikvision_port: int = Field(default=8000, ge=1, le=65535)
     hikvision_username: SecretStr = SecretStr("")

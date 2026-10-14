@@ -70,7 +70,7 @@ with dbase.session() as db:
                 password_hash=PASSWORDS.hash("Synthetic-browser-password!"),
             )
         )
-    if settings.controller_mode == "HIKVISION_READ_ONLY":
+    if settings.controller_mode == "HIKVISION_CONTROLLED":
         # Parser-to-PostgreSQL-to-browser fixtures only. Never a live device
         # acceptance claim; the test process has no credentials and no jobs.
         from app.hikvision import parse_event

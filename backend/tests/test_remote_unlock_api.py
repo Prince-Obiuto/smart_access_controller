@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from app import hikvision_unlock
 from app.hikvision_existing import DEVICE
 from app.hikvision_writes import WriteBlocked
-from app.models import Operation, Idempotency
+from app.models import Audit, Operation, Idempotency
 from conftest import session_client, write
 
 
@@ -47,7 +47,7 @@ def fake_bridge(monkeypatch, duration=5, configure_verified=True, failure=False)
 
 @pytest.mark.parametrize("role", ["MANAGER", "MANAGEMENT", "USER"])
 def test_unprivileged_roles_cannot_read_or_unlock(env, monkeypatch, role):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     sent = fake_bridge(monkeypatch)
     c = session_client(env, role)
     assert c.get("/api/controller/unlock").status_code == 403
@@ -56,11 +56,15 @@ def test_unprivileged_roles_cannot_read_or_unlock(env, monkeypatch, role):
 
 
 def test_duration_mismatch_blocks_before_intent_or_dispatch(env, monkeypatch):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     sent = fake_bridge(monkeypatch, duration=2)
     c = session_client(env, "ADMIN")
     status = c.get("/api/controller/unlock").json()
-    assert status["configuredSeconds"] == 2 and not status["ready"]
+    assert (
+        status["configuredSeconds"] == 2
+        and not status["ready"]
+        and status["controllerStatus"] == "CONNECTED"
+    )
     assert write(c, "/api/controller/unlock", {"confirmed": True}).status_code == 409
     assert sent == []
     with env[1].session() as db:
@@ -70,7 +74,7 @@ def test_duration_mismatch_blocks_before_intent_or_dispatch(env, monkeypatch):
 def test_unlock_acknowledgement_is_not_physical_success_and_replay_never_sends(
     env, monkeypatch
 ):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     sent = fake_bridge(monkeypatch)
     c = session_client(env, "ADMIN")
     assert write(c, "/api/controller/unlock", {"confirmed": False}).status_code == 400
@@ -110,7 +114,7 @@ def test_unlock_acknowledgement_is_not_physical_success_and_replay_never_sends(
 def test_duration_configuration_requires_super_admin_and_exact_readback(
     env, monkeypatch, verified
 ):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     sent = fake_bridge(monkeypatch, duration=2, configure_verified=verified)
     assert (
         write(
@@ -142,7 +146,7 @@ def test_duration_configuration_requires_super_admin_and_exact_readback(
 
 
 def test_timeout_after_durable_intent_is_not_replayed(env, monkeypatch):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     sent = fake_bridge(monkeypatch, failure=True)
     c = session_client(env, "ADMIN")
     assert (
@@ -155,3 +159,20 @@ def test_timeout_after_durable_intent_is_not_replayed(env, monkeypatch):
         c, "/api/controller/unlock", {"confirmed": True}, key="lost-door-response"
     )
     assert retry.json()["status"] == "UNCERTAIN" and sent == ["UNLOCK5"]
+
+
+def test_uncertain_outcome_blocks_new_unlock_attempt_and_audits_rejection(env, monkeypatch):
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
+    sent = fake_bridge(monkeypatch)
+    c = session_client(env, "ADMIN")
+    first = write(c, "/api/controller/unlock", {"confirmed": True}, key="first-attempt")
+    assert first.status_code == 200
+    blocked = write(c, "/api/controller/unlock", {"confirmed": True}, key="second-attempt")
+    assert blocked.status_code == 409
+    assert "uncertain outcome" in blocked.json()["message"]
+    assert sent == ["UNLOCK5"]
+    with env[1].session() as db:
+        rejected = db.scalar(
+            select(Audit).where(Audit.action == "TIMED_UNLOCK_REJECTED").limit(1)
+        )
+        assert rejected and rejected.result == "DUPLICATE_BLOCKED"

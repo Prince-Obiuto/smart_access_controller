@@ -144,9 +144,13 @@ class Bridge:
             if self.process.poll() is None:
                 try:
                     self.process.stdin.write(b"QUIT\n"); self.process.stdin.flush()
-                    self.read()
-                except (OSError, WriteBlocked):
+                except OSError:
                     self.process.terminate()
+                else:
+                    try:
+                        self.process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.process.terminate()
             try:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -328,7 +332,7 @@ def main():
         sub.add_parser(command).add_argument("label", choices=["A", "B"])
     sub.add_parser("close")
     args = parser.parse_args(); settings = Settings()
-    if settings.controller_mode != "HIKVISION_READ_ONLY":
+    if settings.controller_mode == "SIMULATED":
         raise WriteBlocked("KEEP_GENERAL_COLLECTOR_AND_OUTBOX_READ_ONLY")
     if args.command in {"inspect", "activate"}:
         bridge = Bridge(settings)

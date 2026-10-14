@@ -25,23 +25,21 @@ def validity_example():
     return record,intent,profile,raw
 
 
-def test_compatibility_does_not_weaken_global_readback():
+def test_missing_validity_flags_do_not_confirm_card():
     record,intent,profile,raw=validity_example()
     assert not card_matches(record,intent,3)
-    assert compatible_match(record,intent,3,profile,raw)
-    profile["device"]={**DEVICE,"build":0}
     assert not compatible_match(record,intent,3,profile,raw)
 
 
 @pytest.mark.parametrize("field", ["card","doors","plans","start","expiry","leader","validityEnabled","type"])
-def test_compatibility_retains_all_permission_comparisons(field):
+def test_strict_readback_retains_all_permission_comparisons(field):
     record,intent,profile,raw=validity_example()
     record[field] = {"card":"99998888","doors":[1,1]+[0]*254,"plans":[[1,0,0,0]]+[[0]*4 for _ in range(255)],
                      "start":[2026,10,13,17,14,0],"expiry":[2026,10,13,17,26,0],"leader":1,"validityEnabled":0,"type":6}[field]
     assert not compatible_match(record,intent,3,profile,raw)
 
 
-def test_truncated_or_changed_reserved_native_bytes_are_not_accepted():
+def test_invalid_controller_readback_is_not_accepted():
     record,intent,profile,raw=validity_example()
     for change in [{"callbackLength":2707},{"validityOffset":48},{"hex":raw["hex"][:-2]+"01"}]:
         assert not compatible_match(record,intent,3,profile,{**raw,**change})
@@ -56,7 +54,7 @@ def make_event(at, number="00009999", simulated=False):
 
 def test_reader_capture_is_fresh_bounded_distinct_and_preserves_string(env):
     settings,database,accounts,_=env
-    settings.controller_mode="HIKVISION_READ_ONLY"
+    settings.controller_mode="HIKVISION_CONTROLLED"
     with database.session() as db:
         set_setting(db,"hikvision:controller-1",{"state":"CONNECTED","lastCommunication":iso(now())})
         scan=start_real(db,db.get(Account,accounts["ADMIN"][0]),settings)
@@ -147,7 +145,7 @@ def test_native_failure_evidence_keeps_actual_bytes_without_claiming_confirmatio
 
 def test_real_reader_http_session_persists_and_confirms_without_issuance(env):
     settings,database,_,_=env
-    settings.controller_mode="HIKVISION_READ_ONLY"
+    settings.controller_mode="HIKVISION_CONTROLLED"
     admin=session_client(env,"ADMIN")
     with database.session() as db:
         set_setting(db,"hikvision:controller-1",{"state":"CONNECTED","lastCommunication":iso(now())})
@@ -172,7 +170,7 @@ def test_real_reader_http_session_persists_and_confirms_without_issuance(env):
 def test_scope_accepts_only_owned_approved_pending_personal_issuance(env,png):
     _,_,admin,application_id=approved(env,png)
     settings,database,accounts,_=env
-    settings.controller_mode="HIKVISION_READ_ONLY"
+    settings.controller_mode="HIKVISION_CONTROLLED"
     assert cmd(admin,{'type':'issue','id':application_id,'number':'00009999'})['result']=='PENDING'
     with database.session() as db:
         pending=db.scalar(select(Assignment))

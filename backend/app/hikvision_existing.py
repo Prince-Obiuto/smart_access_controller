@@ -42,26 +42,35 @@ DEVICE = {"kind": "device", "model": "DS-K2802", "serial": "DS-K280220250625V020
           "firmware": 33554440, "build": 1639961}
 
 
-def validate_designation(db, cards, baseline):
+def validate_designation(db, cards, baseline, managed_cards=None):
+    managed_cards = managed_cards or {}
     for number, bound in cards.items():
         if number in BANNED or bound.get("kind") not in {"PERSONAL", "VISITOR"} or not bound.get("personIds"):
             raise WriteBlocked("INVALID_DESIGNATED_SCOPE")
         card = db.scalar(select(Card).where(Card.number == number))
         if card and (card.revoked or card.kind != bound["kind"] or card.privileged or card.ever_privileged):
             raise WriteBlocked("TEST_CARD_LOCAL_CONFLICT")
+        previously_managed = (
+            number in managed_cards
+            and managed_cards[number].get("kind") == bound["kind"]
+            and set(managed_cards[number].get("personIds", []))
+            == set(bound["personIds"])
+        )
         pending = db.scalar(select(Assignment).where(Assignment.card_id == card.id, Assignment.ended_at.is_(None))) if card else None
         if pending:
             application = db.scalar(select(Application).where(Application.assignment_id == pending.id))
             # Normal read-only issuance reserves the card locally before a scope
             # exists. It is safe to review that exact owned intent when fresh
             # device readback below proves the card still inactive.
-            if not (card.kind == "PERSONAL" and pending.state == "PENDING" and pending.sync == "PENDING"
+            if not previously_managed and not (card.kind == "PERSONAL" and pending.state == "PENDING" and pending.sync == "PENDING"
                     and pending.person_id in bound["personIds"] and application
                     and application.person_id == pending.person_id and application.state == "ISSUANCE_PENDING"
                     and application.evidence_id and application.reviewer_id):
                 raise WriteBlocked("TEST_CARD_ALREADY_ASSIGNED")
         record = next((c for c in baseline["cards"] if c["card"] == number), None)
-        if not card_matches(record, {"card": number, "enabled": False}):
+        if not previously_managed and not card_matches(
+            record, {"card": number, "enabled": False}
+        ):
             raise WriteBlocked("TEST_CARD_EXISTING_CONTROLLER_PERMISSION")
         for person_id in bound["personIds"]:
             person = db.get(Person, person_id)
@@ -127,24 +136,10 @@ def expected_validity(intent):
 
 
 def compatible_match(record, intent, plan, profile, raw):
-    if card_matches(record, intent, plan):
-        return True
-    if not intent["enabled"] or not record or not profile.get("ownerTimedEvidenceVerified") or profile.get("device") != DEVICE:
-        return False
-    if profile.get("abi") != {"validitySize": 52, "v50Size": 2708, "v50ValidityOffset": 300, "timeExSize": 8}:
-        return False
-    if not raw or raw.get("card") != intent["card"] or raw.get("command") != 2178 or raw.get("direction") != "READ":
-        return False
-    if [raw.get(k) for k in ["nativeSize", "declaredSize", "callbackLength", "validityOffset", "validitySize"]] != [2708, 2708, 2708, 300, 52]:
-        return False
-    try:
-        actual = bytearray.fromhex(raw["hex"])
-        if actual[1:3] != b"\x00\x00": return False
-        actual[1:3] = b"\x01\x01"
-        if bytes(actual) != expected_validity(intent): return False
-    except (KeyError, ValueError, IndexError, struct.error):
-        return False
-    return record.get("beginFlag") == record.get("endFlag") == 0 and card_matches({**record, "beginFlag": 1, "endFlag": 1}, intent, plan)
+    # A device readback without both validity flags is not a usable timed card.
+    # Earlier ABI compatibility evidence allowed those flags to be synthesized,
+    # but iVMS treats that record as an invalid/expired duration.
+    return card_matches(record, intent, plan)
 
 
 class ExistingTemplateTransport:

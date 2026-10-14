@@ -105,7 +105,6 @@ class AccessService:
                         {"writeEpoch": scope["epoch"]}
                         if self.settings.controller_mode == "HIKVISION_CONTROLLED"
                         and scope.get("enabled")
-                        and scope.get("kind") != "EXISTING_TEMPLATE"
                         else {}
                     ),
                 },

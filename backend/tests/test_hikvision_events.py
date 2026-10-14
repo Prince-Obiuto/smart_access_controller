@@ -152,10 +152,10 @@ class FakeSession:
 @pytest.mark.parametrize("complete", [False, True])
 def test_history_checkpoint_dedup_and_reconnect(env, complete):
     settings, database, _, _ = env
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     at = datetime(2026, 1, 2, 12, tzinfo=timezone.utc)
     checkpoint = at - timedelta(minutes=5)
-    key = "backfill:HIKVISION_READ_ONLY:controller-1"
+    key = "backfill:HIKVISION_CONTROLLED:controller-1"
     with database.session() as db:
         set_setting(db, key, {"at": checkpoint.isoformat()})
         db.commit()
@@ -180,7 +180,7 @@ def test_history_checkpoint_dedup_and_reconnect(env, complete):
 
 def test_failed_commit_preserves_unacknowledged_live_and_checkpoint(env, monkeypatch):
     settings, database, _, _ = env
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     session = FakeSession([event()], live=[event()])
     # Fail before committing the events/watermark transaction.
     original = database.session
@@ -205,25 +205,25 @@ def test_failed_commit_preserves_unacknowledged_live_and_checkpoint(env, monkeyp
         collect_real(database, settings, SimpleNamespace(session=session), at=now())
     assert len(session.live) == 1
     with original() as db:
-        assert not get_setting(db, "backfill:HIKVISION_READ_ONLY:controller-1")
+        assert not get_setting(db, "backfill:HIKVISION_CONTROLLED:controller-1")
         assert db.scalar(select(func.count()).select_from(AccessEvent)) == 0
 
 
 def test_gap_preserves_checkpoint_and_queued_events_for_recovery(env):
     settings, database, _, _ = env
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     session = FakeSession(live=[event()], failure="CALLBACK_GAP")
     with database.session() as db:
         set_setting(
             db,
-            "backfill:HIKVISION_READ_ONLY:controller-1",
+            "backfill:HIKVISION_CONTROLLED:controller-1",
             {"at": "2026-01-01T00:00:00+00:00"},
         )
         db.commit()
     collect_real(database, settings, SimpleNamespace(session=session))
     with database.session() as db:
         assert db.scalar(select(func.count()).select_from(AccessEvent)) == 1
-        assert get_setting(db, "backfill:HIKVISION_READ_ONLY:controller-1")[
+        assert get_setting(db, "backfill:HIKVISION_CONTROLLED:controller-1")[
             "at"
         ].startswith("2026-01-01")
         assert get_setting(db, "hikvision:controller-1")["code"] == "CALLBACK_GAP"
@@ -242,12 +242,12 @@ def test_cleanup_commits_last_unacknowledged_callbacks(env):
     assert not session.live
     with env[1].session() as db:
         assert db.scalar(select(func.count()).select_from(AccessEvent)) == 2
-        assert not get_setting(db, "backfill:HIKVISION_READ_ONLY:controller-1")
+        assert not get_setting(db, "backfill:HIKVISION_CONTROLLED:controller-1")
         assert get_setting(db, "hikvision:controller-1")["code"] == "SESSION_CLOSED"
 
 
 def test_expired_sdk_communication_never_projects_connected_or_syncs(env):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     with env[1].session() as db:
         set_setting(
             db,

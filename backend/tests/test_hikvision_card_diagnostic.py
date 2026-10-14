@@ -17,7 +17,7 @@ def setup_scope(env):
     scope = {"enabled": True, "actorId": accounts["SUPER_ADMIN"][0], "epoch": "test-epoch",
              "cards": CARDS, "baseline": deepcopy(snapshot), "lastRecords": {n: None for n in CARDS.values()},
              "revoked": {}, "expiresAt": iso(now() + timedelta(hours=1))}
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     with database.session() as db:
         set_setting(db, KEY, scope); db.commit()
     return settings, database, scope, snapshot

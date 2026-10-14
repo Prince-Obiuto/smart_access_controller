@@ -34,7 +34,7 @@ def collect_real(database, settings, adapter, collect=False, at=None):
     at = at or now()
     session = adapter.session
     controller_id = settings.hikvision_controller_id
-    key = "backfill:HIKVISION_READ_ONLY:" + controller_id
+    key = "backfill:HIKVISION_CONTROLLED:" + controller_id
     # Read checkpoint without keeping a DB/global workflow lock over SDK calls.
     with database.session() as db:
         if not db.get(Controller, controller_id):

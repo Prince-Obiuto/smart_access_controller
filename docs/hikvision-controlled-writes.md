@@ -54,7 +54,7 @@ Prepared code adds a **specific serial/firmware/header/library-hash** compatibil
 
 Before the final cleanup edits, **125 full isolated PostgreSQL backend tests passed**. Further targeted regression/type checks are recorded at handover. Actual owner registration, proof/approval, fresh-card capture, backend-off expiry, approved visitor return/reassignment and closing-hours swipes are still required. The prior A/B evidence below remains intact; identity reset does not undo their permanent revocation. Production baseline/branch work is deferred until acceptance passes.
 
-The collector and ordinary outbox remain **HIKVISION_READ_ONLY**. On 2026-10-12 the owner authenticated a separate, temporary **card-only A/B diagnostic scope**, and real SDK card writes began. This is not paid issuance or bulk synchronization. General schedule activation remains blocked by unresolved template capacity/weekday evidence; referencing freshly verified existing TEMPLATE 3 does not allocate or edit a schedule. Historical no-write snapshots below remain evidence of their dates, not the current state.
+The collector and ordinary outbox remain **HIKVISION_CONTROLLED**. On 2026-10-12 the owner authenticated a separate, temporary **card-only A/B diagnostic scope**, and real SDK card writes began. This is not paid issuance or bulk synchronization. General schedule activation remains blocked by unresolved template capacity/weekday evidence; referencing freshly verified existing TEMPLATE 3 does not allocate or edit a schedule. Historical no-write snapshots below remain evidence of their dates, not the current state.
 
 ## Existing-template card acceptance — 2026-10-12 (scope closed)
 

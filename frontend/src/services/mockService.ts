@@ -35,6 +35,15 @@ export class MockService implements AccessControlService {
   async remoteUnlock(): Promise<Awaited<ReturnType<AccessControlService["remoteUnlock"]>>> {
     throw new ServiceError("NOT_CONNECTED", "Real door control is unavailable in demo mode.");
   }
+  async confirmPhysicalUnlock(): Promise<Awaited<ReturnType<AccessControlService["confirmPhysicalUnlock"]>>> {
+    return {
+      operationId: "demo-unlock",
+      status: "CONFIRMED",
+      readbackVerified: false,
+      physicalState: "RELEASED_AND_RELOCKED_OBSERVED",
+      message: "Door 1 release and return to secured state confirmed by operator.",
+    };
+  }
   async configureUnlockDuration(): Promise<Awaited<ReturnType<AccessControlService["configureUnlockDuration"]>>> { return this.remoteUnlock(); }
   async controllerAccess(): Promise<import("./accessControlService").ControllerAccess> {
     throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");

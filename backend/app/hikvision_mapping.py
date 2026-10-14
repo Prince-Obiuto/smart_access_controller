@@ -90,7 +90,7 @@ def main(argv=None):
     database = None
     try:
         settings = Settings()
-        if settings.controller_mode != "HIKVISION_READ_ONLY":
+        if settings.controller_mode == "SIMULATED":
             raise ValueError("Read-only mode required")
         database = Database(settings)
         with database.session() as db:

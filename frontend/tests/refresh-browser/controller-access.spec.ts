@@ -26,7 +26,7 @@ test("selected card reads and writes use the application with explicit confirmat
     ],
     assignments: [],
     notifications: [],
-    controllerMode: "HIKVISION_READ_ONLY",
+    controllerMode: "HIKVISION_CONTROLLED",
     controllerWritesAvailable: false,
     controllerReadStatus: "CONNECTED",
   };
@@ -139,7 +139,7 @@ test("remote unlock checks duration and requires a second explicit action", asyn
     identity: initial.identities.find((i) => i.role === "SUPER_ADMIN")!,
     notifications: [],
     devices: [{ ...initial.devices[0], doorId: "door-1" }],
-    controllerMode: "HIKVISION_READ_ONLY",
+    controllerMode: "HIKVISION_CONTROLLED",
     controllerWritesAvailable: false,
     controllerReadStatus: "CONNECTED",
   };

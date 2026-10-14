@@ -5,6 +5,8 @@ import hashlib
 import sys
 from getpass import getpass
 from types import SimpleNamespace
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 
 from .common import audit, now
 from .config import Settings
@@ -29,7 +31,7 @@ def validate_duration(rows):
         raise WriteBlocked("FIVE_SECOND_DOOR_DURATION_UNVERIFIED")
 
 
-def application_prepare(settings):
+def application_prepare(settings, db=None):
     from .hikvision_existing import DEVICE
 
     bridge = UnlockBridge(settings)
@@ -38,15 +40,85 @@ def application_prepare(settings):
         if baseline["device"] != DEVICE:
             raise WriteBlocked("DESIGNATED_DEVICE_IDENTITY_CHANGED")
         fields = next((r for r in bridge.rows if r.get("kind") == "doorFields"), {})
-        return {
+        result = {
             "doorId": "door-1",
             "configuredSeconds": fields.get("openDuration"),
             "requiredSeconds": 5,
             "ready": fields.get("openDuration") == 5,
             "sensor": "UNKNOWN",
+            "controllerStatus": "CONNECTED",
         }
+        if db is not None:
+            pending = db.scalar(
+                select(Operation)
+                .where(
+                    Operation.controller_id == settings.hikvision_controller_id,
+                    Operation.target_type == "DOOR",
+                    Operation.target_id == "door-1",
+                    Operation.desired == "UNLOCK5",
+                    Operation.status == "UNCERTAIN",
+                )
+                .order_by(Operation.created_at.desc())
+                .limit(1)
+            )
+            if pending:
+                result.update(
+                    uncertainOperationId=pending.id,
+                    uncertainMessage="A previous Door 1 unlock is awaiting physical confirmation.",
+                )
+        return result
     finally:
         bridge.close()
+
+
+def confirm_physical_unlock(db, settings, actor):
+    """Close the uncertainty window only after the operator observes the door."""
+    require(db, actor, "unlock", settings)
+    domain_lock(db)
+    op = db.scalar(
+        select(Operation)
+        .where(
+            Operation.controller_id == settings.hikvision_controller_id,
+            Operation.target_type == "DOOR",
+            Operation.target_id == "door-1",
+            Operation.desired == "UNLOCK5",
+            Operation.status == "UNCERTAIN",
+        )
+        .order_by(Operation.created_at.desc())
+        .limit(1)
+    )
+    if not op:
+        raise DomainError(
+            "CONFLICT",
+            "There is no uncertain Door 1 unlock awaiting physical confirmation.",
+            409,
+        )
+    op.status = "CONFIRMED"
+    op.completed_at = now()
+    op.data = {
+        **op.data,
+        "physicalState": "RELEASED_AND_RELOCKED_OBSERVED",
+        "physicalObservationConfirmed": True,
+        "physicalObservationAt": now().isoformat(),
+        "physicalObservationBy": actor.id,
+        "message": "Door 1 release and return to secured state confirmed by operator.",
+        "readbackVerified": False,
+    }
+    audit(
+        db,
+        actor,
+        "TIMED_UNLOCK_PHYSICAL_CONFIRMATION",
+        op.id,
+        result="CONFIRMED",
+    )
+    db.commit()
+    return {
+        "operationId": op.id,
+        "status": op.status,
+        "physicalState": op.data["physicalState"],
+        "readbackVerified": False,
+        "message": op.data["message"],
+    }
 
 
 def application_command(db, settings, actor, key, configure=False):
@@ -60,8 +132,6 @@ def application_command(db, settings, actor, key, configure=False):
         raise DomainError("VALIDATION_ERROR", "An Idempotency-Key is required.")
     command = "DURATION5" if configure else "UNLOCK5"
     fingerprint = hashlib.sha256(command.encode()).hexdigest()
-    from sqlalchemy import text
-
     lock_id = int.from_bytes(
         hashlib.sha256(
             ("ift-write:" + settings.hikvision_controller_id).encode()
@@ -102,11 +172,68 @@ def application_command(db, settings, actor, key, configure=False):
             door = db.get(Door, "door-1")
             if not door or door.controller_id != settings.hikvision_controller_id:
                 raise WriteBlocked("DOOR_TARGET_UNVERIFIED")
+            if not configure:
+                latest = db.scalar(
+                    select(Operation)
+                    .where(
+                        Operation.controller_id == door.controller_id,
+                        Operation.target_type == "DOOR",
+                        Operation.target_id == door.id,
+                    )
+                    .order_by(Operation.created_at.desc())
+                    .limit(1)
+                )
+                if latest and latest.status in {"PENDING", "UNCERTAIN"}:
+                    audit(
+                        db,
+                        actor,
+                        "TIMED_UNLOCK_REJECTED",
+                        door.id,
+                        result="DUPLICATE_BLOCKED",
+                    )
+                    db.commit()
+                    raise DomainError(
+                        "CONFLICT",
+                        "A previous Door 1 unlock has an uncertain outcome. "
+                        "Inspect the controller and audit record before trying again.",
+                        409,
+                    )
+                if (
+                    latest
+                    and latest.status == "CONFIRMED"
+                    and latest.created_at
+                    and (now() - latest.created_at).total_seconds() < 5
+                ):
+                    audit(
+                        db,
+                        actor,
+                        "TIMED_UNLOCK_REJECTED",
+                        door.id,
+                        result="COOLDOWN",
+                    )
+                    db.commit()
+                    raise DomainError(
+                        "CONFLICT",
+                        "Door 1 was just unlocked. Wait for the five-second release "
+                        "period to finish before trying again.",
+                        409,
+                    )
+            next_version = (
+                db.scalar(
+                    select(func.max(Operation.version)).where(
+                        Operation.controller_id == door.controller_id,
+                        Operation.target_type == "DOOR",
+                        Operation.target_id == door.id,
+                    )
+                )
+                or 0
+            ) + 1
             op = Operation(
                 controller_id=door.controller_id,
                 target_type="DOOR",
                 target_id=door.id,
                 desired=command,
+                version=next_version,
                 status="UNCERTAIN",
                 attempts=1,
                 actor_id=actor.id,
@@ -203,7 +330,23 @@ def application_command(db, settings, actor, key, configure=False):
             )
             db.commit()
             return output
-        except (WriteBlocked, OSError) as exc:
+        except (WriteBlocked, OSError, IntegrityError) as exc:
+            if isinstance(exc, IntegrityError):
+                db.rollback()
+                domain_lock(db)
+                audit(
+                    db,
+                    actor,
+                    "DOOR_DURATION_REJECTED" if configure else "TIMED_UNLOCK_REJECTED",
+                    "door-1",
+                    result="DUPLICATE_BLOCKED",
+                )
+                db.commit()
+                raise DomainError(
+                    "CONFLICT",
+                    "Another Door 1 operation already exists. Refresh status before retrying.",
+                    409,
+                ) from None
             if op:
                 db.rollback()
                 domain_lock(db)
@@ -219,6 +362,15 @@ def application_command(db, settings, actor, key, configure=False):
                     ),
                     "readbackVerified": False,
                 }
+                db.commit()
+            else:
+                audit(
+                    db,
+                    actor,
+                    "DOOR_DURATION_RESULT" if configure else "TIMED_UNLOCK_RESULT",
+                    "door-1",
+                    result="FAILED",
+                )
                 db.commit()
             raise
         finally:

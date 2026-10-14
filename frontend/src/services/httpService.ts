@@ -85,6 +85,8 @@ export function createHttpService(baseUrl: string): AccessControlService {
     mode: "http",
     unlockStatus: () => request("/controller/unlock"),
     remoteUnlock: () => write("/controller/unlock", { confirmed: true }),
+    confirmPhysicalUnlock: () =>
+      write("/controller/unlock/confirm-physical", { confirmed: true }),
     configureUnlockDuration: () => write("/controller/unlock-duration", { confirmed: true }),
     controllerAccess: () => request("/controller/access"),
     authorizeControllerCards: (cards) => write("/controller/access/authorize", { cards, confirmed: true }),

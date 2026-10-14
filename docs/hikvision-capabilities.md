@@ -1,5 +1,24 @@
 # Hikvision read-only capability evidence
 
+## Remote unlock safety and readiness
+
+Remote unlock is a Door 1-only, firmware-timed operation. The native bridge
+uses `NET_DVR_ControlGateway` with the controller's configured release
+duration; the SDK call does not accept a per-command duration. Therefore a
+controller readback other than the required 5 seconds blocks the unlock. A
+Super Admin must explicitly confirm the separate Door 1 duration update, which
+changes only `byOpenDuration`, verifies the complete configuration by readback,
+and must be owner-authorized before use.
+
+Admin and Super Admin accounts must explicitly confirm each unlock. The API
+writes a durable intent and audit entry before the one native send, requires a
+unique idempotency key, blocks unresolved outcomes and the five-second
+post-command cooldown, and never retries automatically. An SDK acknowledgement
+is recorded as `UNCERTAIN` with physical state `UNKNOWN`; it is not evidence
+that the magnetic lock released or re-secured. Production readiness still
+requires owner-authorized physical observation of one five-second release and
+subsequent relocking, plus verification that no other door changed.
+
 ## Development acceptance continuation — 2026-10-14
 
 **Latest continuation, 18:05 Lagos:** Visitor05's normal approved assignment reached SDK/readback CONFIRMED for the exact 13:55:22–14:07:22 window, but the interruption missed its granted swipe and backend-stop test. The owner's later denial matches a real event at 17:34:31; it does not prove expiry independently of the backend. Physical return/normal checkout is recorded; disable `7bcb1888-12de-4b5d-8434-fa509e90d60c` is CONFIRMED by strict fresh readback, blacklist/zero rights, with protected cards/schedules unchanged. The expired V-only scope closed after GET-only verification. Visitor04 remains genuinely APPROVED 13:05–18:45 and unassigned, prepared for its own reviewed reassignment and 18:30 boundary observations. Visitor03's original compilation-timeout/UNCERTAIN evidence remains unchanged; subsequent GET reconciliation and cleanup are recorded in the [acceptance table](development-acceptance.md).
@@ -46,7 +65,7 @@ At the owner's subsequent request, **17:08:38 Lagos**, the three old test regist
 
 Cleanup removed 13 obsolete generated UUID native binaries (1,629,888 bytes), retained 26 diagnostic JSON artifacts/all SDK files, and archived the unused visitor-password helper. Generated bridge binaries now clean up after process exit; the probe's unused main was removed. **125 full isolated backend tests passed** before final cleanup edits; final focused/type checks are recorded separately. Required physical expiry, closing boundary, visitor reuse and normal paid issuance remain pending new registrations and approvals; baseline/production work remains deferred.
 
-**Real events are reaching PostgreSQL; the collector and ordinary outbox remain HIKVISION_READ_ONLY.** On 2026-10-12 the owner authenticated a separate A/B diagnostic scope and real card writes began against existing TEMPLATE 3. Bulk writes, schedule editing and paid/visitor approval bypasses remain blocked. Historical no-write snapshots below describe their dates; the current card acceptance entry supersedes them.
+**Real events are reaching PostgreSQL; the collector and ordinary outbox remain HIKVISION_CONTROLLED.** On 2026-10-12 the owner authenticated a separate A/B diagnostic scope and real card writes began against existing TEMPLATE 3. Bulk writes, schedule editing and paid/visitor approval bypasses remain blocked. Historical no-write snapshots below describe their dates; the current card acceptance entry supersedes them.
 
 ## Existing Active Hours card diagnostics — 2026-10-12
 
@@ -129,7 +148,7 @@ Screenshots were also visually inspected; neither layout had document-width over
 
 Run `cd frontend && npm run test:refresh`; the new `playwright.refresh.config.ts` starts an isolated HTTP frontend on port 5177 and writes `test-results/refresh-results.json`, per-viewport frame measurements and screenshots. A durable private copy is at `backend/var/acceptance/2026-10-12-frontend-flicker/`. Typecheck, the 37 existing frontend unit tests and production build passed. The existing mock phone/laptop workflow suite also passed **6/6** (authorization/navigation, registration/payment evidence and card/visitor-return workflows). No connected/hardware suite is claimed as newly rerun.
 
-A separate **database-only read at 15:16:52 Lagos** confirmed `HIKVISION_READ_ONLY`, writes unavailable, no write scope, unchanged zero operation/confirmation counts and hashes, **358 real events**, zero duplicate source-key groups and CONNECTED/OK. Reader 1 ENTRY / Reader 2 EXIT is unchanged. The watermark advanced naturally to `2026-10-09T18:29:45.559505Z`; full multi-day catch-up remains incomplete. No capacity query, uniform-week read, clock/permission write, recovery test or worker restart was performed for this frontend task. Agwuoma's last confirmed card/schedule readbacks remain the saved 12:49:19 evidence, not a newly repeated GET.
+A separate **database-only read at 15:16:52 Lagos** confirmed `HIKVISION_CONTROLLED`, writes unavailable, no write scope, unchanged zero operation/confirmation counts and hashes, **358 real events**, zero duplicate source-key groups and CONNECTED/OK. Reader 1 ENTRY / Reader 2 EXIT is unchanged. The watermark advanced naturally to `2026-10-09T18:29:45.559505Z`; full multi-day catch-up remains incomplete. No capacity query, uniform-week read, clock/permission write, recovery test or worker restart was performed for this frontend task. Agwuoma's last confirmed card/schedule readbacks remain the saved 12:49:19 evidence, not a newly repeated GET.
 
 Changed files for this task: `frontend/src/App.tsx`, `frontend/src/pages/Records.tsx`, `frontend/package.json`, `frontend/playwright.refresh.config.ts`, `frontend/tests/refresh-browser/refresh.spec.ts`, `README.md`, and the two Hikvision reports. Existing notification-button and other pending local edits were preserved. The [calibration proposal](hikvision-controlled-writes.md#smallest-isolated-calibration-proposal--2026-10-12-not-authorized-or-executed) now gives exact conditional resource IDs, saved contents and cleanup acceptance checks. Template capacity/weekday evidence and spare-card designation remain unresolved. No calibration or controller write, commit, push or deployment occurred.
 
@@ -228,7 +247,7 @@ Changed tracked files in this retry: `README.md`, `docs/hikvision-capabilities.m
 
 ## Acceptance refresh — 2026-10-11
 
-Read-only checks at approximately **18:22–18:23 Lagos** found `enp0s31f6` DOWN without an address. Host routing selects `10.10.20.8 via 11.10.10.1 dev wlp1s0 src 11.10.10.4`. Both the existing host diagnostic and the running backend-container diagnostic returned `TCP_TIMEOUT` for port 8000, with `CREDENTIALS_PRESENT`, `HIKVISION_READ_ONLY` and `deviceWritesAllowed:false`. No fresh SDK login, identity readback, subscription or history retrieval can be claimed. DS-K2802 / V2.0.8 build 250625 remains the previously verified identity, not a new device response.
+Read-only checks at approximately **18:22–18:23 Lagos** found `enp0s31f6` DOWN without an address. Host routing selects `10.10.20.8 via 11.10.10.1 dev wlp1s0 src 11.10.10.4`. Both the existing host diagnostic and the running backend-container diagnostic returned `TCP_TIMEOUT` for port 8000, with `CREDENTIALS_PRESENT`, `HIKVISION_CONTROLLED` and `deviceWritesAllowed:false`. No fresh SDK login, identity readback, subscription or history retrieval can be claimed. DS-K2802 / V2.0.8 build 250625 remains the previously verified identity, not a new device response.
 
 The existing backend and PostgreSQL containers are healthy; `/api/health` reports read-only mode and unauthenticated `/api/workspace` returns 401. The frontend at `127.0.0.1:5173` is currently unavailable (connection refused); current UI rendering and live updates are unverified. Services were not rebuilt, restarted or deployed. The running backend remains the earlier read-only image: `app/hikvision_control.py` is absent there. Future runtime activation must not assume that this container contains the prepared executor.
 
@@ -283,7 +302,7 @@ Builds record SHA-256 hashes of the actual local header, library and bridge sour
 
 ## Setup and verification commands
 
-Run from the repository root. Existing private `.env` already selects `CONTROLLER_MODE=HIKVISION_READ_ONLY`, preserves DB credentials, and sets `HIKVISION_SDK_DIR=EN-HCNetSDKV6.1.9.4_build20220412_linux64`. If controller credentials are absent, the owner runs:
+Run from the repository root. Existing private `.env` already selects `CONTROLLER_MODE=HIKVISION_CONTROLLED`, preserves DB credentials, and sets `HIKVISION_SDK_DIR=EN-HCNetSDKV6.1.9.4_build20220412_linux64`. If controller credentials are absent, the owner runs:
 
 ```sh
 backend/.venv/bin/python backend/scripts/configure_hikvision.py
@@ -410,7 +429,7 @@ Generated SDK binaries, build manifests, private snapshots and verification harn
 
 ## Controlled-write continuation: current status
 
-The existing local Compose backend was started using `compose.hikvision.yaml`; it is healthy in **HIKVISION_READ_ONLY**. The existing HTTP frontend serves port 5173. Normal owner password/session login produced a real `LOGIN` audit at **2026-10-08 17:18:36 Lagos**. Unauthenticated workspace access through that frontend proxy returned 401. No bootstrap, password reset, test-auth session or owner impersonation was used. The owner skipped the physical cable test. Role and CSRF regressions use isolated accounts via normal HTTP login and are separately reported.
+The existing local Compose backend was started using `compose.hikvision.yaml`; it is healthy in **HIKVISION_CONTROLLED**. The existing HTTP frontend serves port 5173. Normal owner password/session login produced a real `LOGIN` audit at **2026-10-08 17:18:36 Lagos**. Unauthenticated workspace access through that frontend proxy returned 401. No bootstrap, password reset, test-auth session or owner impersonation was used. The owner skipped the physical cable test. Role and CSRF regressions use isolated accounts via normal HTTP login and are separately reported.
 
 A preservation check during this continuation counted **234 real events** (increased from 169), one existing account, and unchanged operation/confirmation hashes. There were zero actual outbox/confirmation rows, as at the previous baseline; nonempty held-outbox behavior is exercised by regressions. The verified reader-map setting remains Reader 1 EXIT / Reader 2 ENTRY. Unknown swiped credentials remain unknown; no person/card import or controller permission synchronization occurred.
 
@@ -418,7 +437,7 @@ Read-only inventory established four existing controller cards and card-access w
 
 **Activation is currently blocked.** Card-access template GET succeeds at 1–128 but 129–255 returns SDK error 11, not a proven absence result. V50 boundary probes agree. The returned ACS XML omits template capacity; a complete ownership/resource inventory cannot yet be claimed. Nonuniform weekly ordering also lacks authoritative evidence. No owner-designated spare card/person or visitor test credential was supplied. The unknown swiped card was not chosen on the owner's behalf. No setter or AUTHORIZE command was sent to a real native session.
 
-Prepared implementation adds an explicit `HIKVISION_CONTROLLED` mode plus authenticated per-controller/credential/person/resource scopes, epoch-based backlog hold and individual review, serialized durable execution, independent priority disable worker, bounded retries, pre-send hashes, GET-first timeout reconciliation, subsequent readback, current-state revalidation, physical replacement/visitor barriers and separate explicitly designated unrestricted schedule support. Native setter primitives are **implemented but not device-verified**. No remote-unlock, door-state schedule, person/biometric, clock, reset, network or firmware write is exposed. Read-only mode remains an independent gate.
+Prepared implementation adds an explicit `HIKVISION_CONTROLLED` mode plus authenticated per-controller/credential/person/resource scopes, epoch-based backlog hold and individual review, serialized durable execution, independent priority disable worker, bounded retries, pre-send hashes, GET-first timeout reconciliation, subsequent readback, current-state revalidation, physical replacement/visitor barriers and separate explicitly designated unrestricted schedule support. Native setter primitives are **implemented but not device-verified**. No remote-unlock, door-state schedule, person/biometric, clock, reset, network or firmware write is exposed. The former read-only mode is no longer a runtime option; controlled mode remains gated by the active scope.
 
 See [controlled-write interfaces, commands, ownership limits and prepared physical sequence](hikvision-controlled-writes.md). The guide distinguishes successful reads from untested writes, and documents the current activation blocker without a bypass. Physical issue/grant, revoke/deny, backend-off expiry, weekly/holiday denial, replacement recovery, returned-visitor denial/reassignment, unrestricted hours and Ethernet recovery remain pending.
 

@@ -29,7 +29,7 @@ test("read-only blocked state is honest and offers no door writes", async ({
     page.getByText("Event connection blocked", { exact: true }),
   ).toBeVisible();
   const snapshot = await (await page.request.get("/api/workspace")).json();
-  expect(snapshot.controllerMode).toBe("HIKVISION_READ_ONLY");
+  expect(snapshot.controllerMode).toBe("HIKVISION_CONTROLLED");
   expect(snapshot.controllerWritesAvailable).toBe(false);
   expect(
     snapshot.devices.every((device: { online: boolean }) => !device.online),

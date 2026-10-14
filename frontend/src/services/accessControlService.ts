@@ -45,8 +45,9 @@ export interface ControllerCardRead {
 }
 export interface AccessControlService {
   readonly mode: "mock" | "http";
-  unlockStatus(): Promise<{ doorId: string; configuredSeconds: number; requiredSeconds: number; ready: boolean; sensor: string }>;
-  remoteUnlock(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
+  unlockStatus(): Promise<{ doorId: string; configuredSeconds: number; requiredSeconds: number; ready: boolean; sensor: string; controllerStatus: string; uncertainOperationId?: string; uncertainMessage?: string }>;
+  remoteUnlock(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; sdkAcknowledged?: boolean; message: string }>;
+  confirmPhysicalUnlock(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
   configureUnlockDuration(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
   controllerAccess(): Promise<ControllerAccess>;
   authorizeControllerCards(cards: { number: string; kind: "PERSONAL" | "VISITOR"; personIds: string[] }[]): Promise<ControllerAccess>;

@@ -3,20 +3,18 @@ from typing import Protocol
 from datetime import datetime
 from .models import Operation, Controller
 
-READ_ONLY_MESSAGE = (
-    "Controller writes unavailable in read-only mode. "
-    "Local intent retained; no device confirmation."
+CONTROLLED_WRITE_MESSAGE = (
+    "Controller writes require an active controlled authorization scope."
 )
-
 
 class ControllerReadUnavailable(Exception):
     """Safe transport failure; never substitute simulated events or move a checkpoint."""
 
 
-class HikvisionReadOnlyAdapter:
-    """Read-only SDK session; execute always refuses mutations."""
+class HikvisionAdapter:
+    """SDK read session used by the collector; controlled writes use the write bridge."""
 
-    mode = "HIKVISION_READ_ONLY"
+    mode = "HIKVISION_CONTROLLED"
 
     def __init__(self, settings=None):
         self.settings = settings
@@ -28,7 +26,7 @@ class HikvisionReadOnlyAdapter:
             self.session = None
 
     def execute(self, operation, controller, controls):
-        return AdapterResult("PENDING", READ_ONLY_MESSAGE)
+        return AdapterResult("PENDING", CONTROLLED_WRITE_MESSAGE)
 
     def collect_events(self, controller, start, end):
         if self.session is None:
@@ -41,8 +39,8 @@ class HikvisionReadOnlyAdapter:
 
 
 def adapter_for(settings):
-    if settings.controller_mode in {"HIKVISION_READ_ONLY", "HIKVISION_CONTROLLED"}:
-        return HikvisionReadOnlyAdapter(settings)
+    if settings.controller_mode == "HIKVISION_CONTROLLED":
+        return HikvisionAdapter(settings)
     if settings.controller_mode == "SIMULATED":
         return SimulatedAdapter()
     # Never turn an unknown mode into mock success.

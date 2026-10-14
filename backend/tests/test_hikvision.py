@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from app.config import ControllerSettings
 from app.controllers import (
     ControllerReadUnavailable,
-    HikvisionReadOnlyAdapter,
+    HikvisionAdapter,
     SimulatedAdapter,
     adapter_for,
 )
@@ -126,9 +126,9 @@ def test_sdk_file_presence_never_claims_support(tmp_path, monkeypatch):
 def test_unknown_mode_does_not_fall_back(tmp_path):
     with pytest.raises(ValueError):
         config(tmp_path, controller_mode="REAL")
-    settings = config(tmp_path, controller_mode="HIKVISION_READ_ONLY")
+    settings = config(tmp_path, controller_mode="HIKVISION_CONTROLLED")
     adapter = adapter_for(settings)
-    assert isinstance(adapter, HikvisionReadOnlyAdapter)
+    assert isinstance(adapter, HikvisionAdapter)
     assert adapter.execute(None, None, {}).status == "PENDING"
     with pytest.raises(ControllerReadUnavailable):
         adapter.collect_events(SimpleNamespace(id="controller-1"), None, None)
@@ -136,12 +136,12 @@ def test_unknown_mode_does_not_fall_back(tmp_path):
 
 def test_blocked_read_keeps_checkpoints_and_never_inserts_mock_events(env):
     settings, database, _, _ = env
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     with database.session() as db:
         set_setting(db, "backfill:controller-1", {"at": "2026-01-01T00:00:00+00:00"})
         set_setting(
             db,
-            "backfill:HIKVISION_READ_ONLY:controller-1",
+            "backfill:HIKVISION_CONTROLLED:controller-1",
             {"at": "2026-01-02T00:00:00+00:00"},
         )
         db.commit()
@@ -151,17 +151,17 @@ def test_blocked_read_keeps_checkpoints_and_never_inserts_mock_events(env):
     with database.session() as db:
         assert db.scalar(select(func.count()).select_from(AccessEvent)) == 0
         assert get_setting(db, "backfill:controller-1")["at"].startswith("2026-01-01")
-        assert get_setting(db, "backfill:HIKVISION_READ_ONLY:controller-1")[
+        assert get_setting(db, "backfill:HIKVISION_CONTROLLED:controller-1")[
             "at"
         ].startswith("2026-01-02")
         with pytest.raises(ControllerReadUnavailable):
-            backfill(db, adapter=HikvisionReadOnlyAdapter())
+            backfill(db, adapter=HikvisionAdapter())
 
 
 def test_pending_outbox_untouched_even_if_mock_adapter_injected(env, png):
     _, _, admin, aid = approved(env, png)
     settings, database, _, _ = env
-    settings.controller_mode = "HIKVISION_READ_ONLY"
+    settings.controller_mode = "HIKVISION_CONTROLLED"
     response = cmd(admin, {"type": "issue", "id": aid, "number": "00000042"})
     assert response["result"] == "PENDING"
     assert "confirmation pending" in response["message"]
@@ -190,7 +190,7 @@ def test_prior_simulated_confirmations_not_real_evidence_or_idempotent_success(
     # Persist a distinct idempotent response while still explicitly simulated.
     body = {"type": "retry-sync", "schedule": True}
     cmd(admin, body, key="mode-replay")
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     snap = admin.get("/api/workspace").json()
     assert snap["controllerReadStatus"] == "BLOCKED"
     assert not snap["controllerWritesAvailable"]
@@ -220,7 +220,7 @@ def test_read_only_rejects_unlock_scanning_and_simulation(env):
     scan = write(admin, "/api/enrolment-sessions").json()
     detected = admin.get("/api/enrolment-sessions/" + scan["id"]).json()
     assert detected["state"] == "DETECTED"
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     cmd(admin, {"type": "unlock", "doorId": "door-1", "confirmed": True}, 409)
     assert write(admin, "/api/enrolment-sessions").status_code == 409
     assert admin.get("/api/enrolment-sessions/" + scan["id"]).status_code == 409
@@ -231,6 +231,6 @@ def test_read_only_rejects_unlock_scanning_and_simulation(env):
         write(admin, f"/api/enrolment-sessions/{scan['id']}/cancel").status_code == 200
     )
     cmd(sa, {"type": "demo-event", "event": "UNKNOWN"}, 403)
-    assert admin.get("/api/health").json()["controllerMode"] == "HIKVISION_READ_ONLY"
+    assert admin.get("/api/health").json()["controllerMode"] == "HIKVISION_CONTROLLED"
     with env[1].session() as db:
         assert db.scalar(select(func.count()).select_from(Operation)) == 0

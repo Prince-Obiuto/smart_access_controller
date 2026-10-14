@@ -208,11 +208,7 @@ function Application() {
         ? "Demo mode — hardware actions are simulated."
         : data?.controllerMode === "HIKVISION_CONTROLLED"
           ? `Hikvision · ${data.controllerReadStatus === "CONNECTED" ? "event connection active" : "event connection unavailable"} · ${data.controllerWriteMessage}`
-          : data?.controllerMode === "HIKVISION_READ_ONLY"
-            ? data.controllerReadStatus === "CONNECTED"
-              ? "Controller connected · card operations require administrator authorization."
-              : "Controller event connection unavailable · check the local connection."
-            : data?.controllerMode === "SIMULATED"
+          : data?.controllerMode === "SIMULATED"
               ? "Controller integration is simulated."
               : "Controller status available after sign-in."}
     </div>

@@ -23,13 +23,13 @@ from conftest import approved, cmd, session_client, write
     ],
 )
 def test_real_controller_access_role_boundary(env, role, allowed):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     response = session_client(env, role).get("/api/controller/access")
     assert response.status_code == (200 if allowed else 403)
 
 
 def setup(env, png, monkeypatch):
-    env[0].controller_mode = "HIKVISION_READ_ONLY"
+    env[0].controller_mode = "HIKVISION_CONTROLLED"
     _, _, admin, application_id = approved(env, png)
     result = cmd(admin, {"type": "issue", "id": application_id, "number": "00009999"})
     with env[1].session() as db:

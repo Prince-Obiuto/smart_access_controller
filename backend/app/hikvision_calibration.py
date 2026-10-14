@@ -54,7 +54,7 @@ def gates(report):
 
 
 def prepare(settings, output):
-    if settings.controller_mode != "HIKVISION_READ_ONLY" or settings.controller_writes_available:
+    if settings.controller_mode == "SIMULATED" or settings.controller_writes_available:
         raise SystemExit("READ_ONLY_REQUIRED")
     if output.exists():
         raise SystemExit("Refusing to replace an evidence directory")

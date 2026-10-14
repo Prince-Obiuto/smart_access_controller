@@ -77,7 +77,7 @@ export function ControllerAccess() {
                     ? access.expired
                       ? "EXPIRED"
                       : "AUTHORIZED"
-                    : "READ_ONLY"
+                    : "DISABLED"
                 }
               />{" "}
               {access.expiresAt && (

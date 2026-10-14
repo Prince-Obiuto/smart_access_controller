@@ -182,12 +182,19 @@ def current_intent(db, op, scope, at):
         if start.microsecond:
             start += timedelta(seconds=1)
         start = start.replace(microsecond=0)
-        expiry = assignment.expiry.astimezone(LAGOS).replace(microsecond=0)
-        if not 1970 <= start.year <= expiry.year <= 2037 or expiry <= start:
+        # Local assignments use a half-open interval [start, expiry), while
+        # HCNetSDK stores an inclusive card end timestamp. Writing midnight
+        # directly makes iVMS classify an otherwise valid card duration as
+        # invalid, so convert the exclusive boundary to its final valid second.
+        expiry_dt = (
+            assignment.expiry - timedelta(seconds=1)
+        ).astimezone(LAGOS).replace(microsecond=0)
+        if not 1970 <= start.year <= expiry_dt.year <= 2037 or expiry_dt <= start:
             raise WriteBlocked("VALIDITY_RANGE_UNSUPPORTED")
+        expiry = list(expiry_dt.timetuple()[:6])
         result.update(
             start=list(start.timetuple()[:6]),
-            expiry=list(expiry.timetuple()[:6]),
+            expiry=expiry,
             privileged=privileged,
             schedule=db.get(Schedule, "normal").data,
             exceptions=[
@@ -233,6 +240,16 @@ def seconds(value):
     if not 0 <= h <= 23 or not 0 <= m <= 59:
         raise WriteBlocked("INVALID_SCHEDULE")
     return h * 3600 + m * 60
+
+
+def device_card_expiry(expiry):
+    """Convert the app's exclusive expiry boundary to HCNetSDK's inclusive end."""
+    return list(
+        (expiry - timedelta(seconds=1))
+        .astimezone(LAGOS)
+        .replace(microsecond=0)
+        .timetuple()[:6]
+    )
 
 
 def compile_schedule(intent, scope):

@@ -107,7 +107,8 @@ def activate(db, settings, actor, cards):
     authorize(db, actor, settings, True)
     if not 1 <= len(cards) <= 4 or any(n in BANNED for n in cards):
         raise WriteBlocked("INVALID_DESIGNATED_SCOPE")
-    if get_setting(db, scope_key(settings.hikvision_controller_id)).get("enabled"):
+    previous_scope = get_setting(db, scope_key(settings.hikvision_controller_id))
+    if previous_scope.get("enabled"):
         raise WriteBlocked("CLOSE_PREVIOUS_AUTHORIZATION_FIRST")
     db.commit()  # No workflow lock held during bounded native GETs.
     probe, baseline, rows = observe(settings, cards)
@@ -117,6 +118,7 @@ def activate(db, settings, actor, cards):
     if get_setting(db, scope_key(settings.hikvision_controller_id)).get("enabled"):
         raise WriteBlocked("CLOSE_PREVIOUS_AUTHORIZATION_FIRST")
     profile = validity_profile(db, probe)
+    validate_designation(db, cards, baseline, previous_scope.get("cards"))
     for number, bound in cards.items():
         for person_id in bound.get("personIds", []):
             person = db.get(Person, person_id)
@@ -143,7 +145,9 @@ def activate(db, settings, actor, cards):
             else None
         )
         if not assignment or assignment.state != "ACTIVE":
-            validate_designation(db, {number: bound}, baseline)
+            validate_designation(
+                db, {number: bound}, baseline, previous_scope.get("cards")
+            )
             continue
         # Adopt only a previously confirmed managed entitlement, never iVMS cards.
         account = db.scalar(
@@ -153,10 +157,9 @@ def activate(db, settings, actor, cards):
         op = db.scalar(
             select(Operation).where(
                 Operation.target_id == assignment.id,
-                Operation.version == assignment.version,
                 Operation.status == "CONFIRMED",
                 Operation.controller_id == settings.hikvision_controller_id,
-            )
+            ).order_by(Operation.version.desc())
         )
         raw = next(
             (
@@ -175,7 +178,7 @@ def activate(db, settings, actor, cards):
             or card.ever_privileged
             or card.kind != bound.get("kind")
             or assignment.person_id not in bound.get("personIds", [])
-            or assignment.sync != "SYNCHRONIZED"
+            or assignment.sync not in {"SYNCHRONIZED", "PENDING"}
             or assignment.expiry <= now()
             or not account
             or account.role != "USER"

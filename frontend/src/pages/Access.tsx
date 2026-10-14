@@ -594,7 +594,7 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
                 }
               }}
             >
-              {data.controllerMode === "HIKVISION_READ_ONLY" || data.controllerMode === "HIKVISION_CONTROLLED"
+              {data.controllerMode === "HIKVISION_CONTROLLED"
                 ? "Scan real entrance reader" : "Simulate scan card"}
             </Action>
           )}

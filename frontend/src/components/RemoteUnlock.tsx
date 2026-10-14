@@ -13,9 +13,11 @@ export function RemoteUnlock() {
   const [error, setError] = useState("");
   const [configure, setConfigure] = useState(false);
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const read = async () => {
     setInfo(null);
     setError("");
+    setMessage("");
     try {
       setInfo(await service.unlockStatus());
     } catch (e) {
@@ -61,6 +63,46 @@ export function RemoteUnlock() {
                 The physical door state is unknown. A controller acknowledgement
                 does not prove the door opened.
               </p>
+              <p role="status">
+                Controller communication:{" "}
+                <strong>{info.controllerStatus || "UNKNOWN"}</strong>
+              </p>
+              {info.uncertainOperationId && (
+                <div className="callout warning">
+                  <p>
+                    The previous command was acknowledged by the controller,
+                    but its physical result was not observed by the
+                    application.
+                  </p>
+                  <p>
+                    Observe Door 1 release and its return to the secured state,
+                    then confirm that observation here. Do not press unlock
+                    again.
+                  </p>
+                  <Action
+                    onClick={async () => {
+                      if (busy) return;
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const result = await service.confirmPhysicalUnlock();
+                        setMessage(result.message);
+                        notify(result.message, false);
+                        await read();
+                      } catch (e) {
+                        setError((e as Error).message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    disabled={busy}
+                  >
+                    {busy
+                      ? "Saving observation…"
+                      : "Confirm Door 1 released and relocked"}
+                  </Action>
+                </div>
+              )}
               {configure ? (
                 <>
                   <p>
@@ -71,6 +113,9 @@ export function RemoteUnlock() {
                   <Action
                     className="primary"
                     onClick={async () => {
+                      if (busy) return;
+                      setBusy(true);
+                      setError("");
                       try {
                         const result = await service.configureUnlockDuration();
                         setMessage(result.message);
@@ -79,10 +124,13 @@ export function RemoteUnlock() {
                         await read();
                       } catch (e) {
                         setError((e as Error).message);
+                      } finally {
+                        setBusy(false);
                       }
                     }}
+                    disabled={busy}
                   >
-                    Confirm duration change
+                    {busy ? "Waiting for controller…" : "Confirm duration change"}
                   </Action>
                   <button onClick={() => setConfigure(false)}>
                     Cancel change
@@ -100,17 +148,32 @@ export function RemoteUnlock() {
                     <Action
                       className="primary"
                       onClick={async () => {
+                        if (busy) return;
+                        setBusy(true);
+                        setError("");
                         try {
                           const result = await service.remoteUnlock();
                           setMessage(result.message);
                           notify(result.message, result.status === "FAILED");
-                          setInfo(null);
+                          setInfo((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  sensor: result.physicalState,
+                                }
+                              : current,
+                          );
                         } catch (e) {
                           setError((e as Error).message);
+                        } finally {
+                          setBusy(false);
                         }
                       }}
+                      disabled={busy}
                     >
-                      Unlock Door 1 once for 5 seconds
+                      {busy
+                        ? "Waiting for controller…"
+                        : "Unlock Door 1 once for 5 seconds"}
                     </Action>
                   )}
                   {!info.ready && data.identity.role === "SUPER_ADMIN" && (

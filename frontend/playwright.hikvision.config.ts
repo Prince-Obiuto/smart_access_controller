@@ -8,7 +8,7 @@ export default defineConfig({
     ? connected.webServer.map((server, index) => ({
         ...server,
         ...(index === 0
-          ? { env: { IFT_BROWSER_CONTROLLER_MODE: "HIKVISION_READ_ONLY" } }
+          ? { env: { IFT_BROWSER_CONTROLLER_MODE: "HIKVISION_CONTROLLED" } }
           : {}),
       }))
     : connected.webServer,

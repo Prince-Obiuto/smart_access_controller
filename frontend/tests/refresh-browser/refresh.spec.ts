@@ -25,7 +25,7 @@ async function fixture(page: Page) {
       delayActivation: false,
       unlockTimeout: false,
     },
-    controllerMode: "HIKVISION_READ_ONLY",
+    controllerMode: "HIKVISION_CONTROLLED",
     controllerWritesAvailable: false,
     controllerReadStatus: "CONNECTED",
     controllerHistoryStatus: "OK",
