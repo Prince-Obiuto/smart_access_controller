@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("controlled mode requires explicit scope and never offers door commands", async ({
+test("controlled mode offers explicit reviews while blocking generic command replay", async ({
   page,
 }, info) => {
   await page.goto("/login");
@@ -15,11 +15,13 @@ test("controlled mode requires explicit scope and never offers door commands", a
     page.getByRole("heading", { name: "Dashboard", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText(/Physical writes blocked; no active test scope\./),
+    page.getByText(
+      /Controller changes require individual preview, authorization and SDK readback/,
+    ),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Timed unlock", exact: true }),
-  ).toHaveCount(0);
+    page.getByRole("button", { name: "Remote unlock", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText("Simulated live monitor", { exact: true }),
   ).toHaveCount(0);

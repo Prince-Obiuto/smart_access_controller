@@ -64,6 +64,15 @@ async function fixture(page: Page) {
     const respond = (body: unknown, status = 200) =>
       route.fulfill({ status, json: body });
     if (url.pathname === "/api/auth/me") return respond(snapshot.identity);
+    if (url.pathname === "/api/controller/access")
+      return respond({
+        enabled: true,
+        expired: false,
+        template: 3,
+        cards: [],
+        operations: [],
+        management: [],
+      });
     if (url.pathname === "/api/workspace") {
       state.workspaceReads++;
       const result = structuredClone({

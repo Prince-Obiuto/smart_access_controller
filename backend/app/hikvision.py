@@ -506,12 +506,13 @@ class NativeSession:
             "AUTHORIZE",
             "CARD_WRITE",
             "PLAN_WRITE",
+            "MANAGE",
         }:
             raise ControllerReadUnavailable("PERMISSION_CHANNEL_REQUIRED")
         if (
             name in {"AUTHORIZE", "CARD_WRITE", "PLAN_WRITE"}
-            and self.settings.controller_mode != "HIKVISION_CONTROLLED"
-        ):
+            or (name == "MANAGE" and fields and fields[0] == "APPLY")
+        ) and self.settings.controller_mode != "HIKVISION_CONTROLLED":
             raise ControllerReadUnavailable("READ_ONLY")
         tokens = [str(v) for v in fields]
         if any(not v or any(c.isspace() or c == "\0" for c in v) for v in tokens):

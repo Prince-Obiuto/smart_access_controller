@@ -29,27 +29,94 @@ const plus = (iso: string, days: number) =>
   new Date(Date.parse(iso) + days * day).toISOString();
 const copy = <T>(v: T): T => structuredClone(v);
 export class MockService implements AccessControlService {
-  async unlockStatus(): Promise<Awaited<ReturnType<AccessControlService["unlockStatus"]>>> {
-    throw new ServiceError("NOT_CONNECTED", "Real door control is unavailable in demo mode.");
+  async unlockStatus(): Promise<
+    Awaited<ReturnType<AccessControlService["unlockStatus"]>>
+  > {
+    throw new ServiceError(
+      "NOT_CONNECTED",
+      "Real door control is unavailable in demo mode.",
+    );
   }
-  async remoteUnlock(): Promise<Awaited<ReturnType<AccessControlService["remoteUnlock"]>>> {
-    throw new ServiceError("NOT_CONNECTED", "Real door control is unavailable in demo mode.");
+  async remoteUnlock(): Promise<
+    Awaited<ReturnType<AccessControlService["remoteUnlock"]>>
+  > {
+    throw new ServiceError(
+      "NOT_CONNECTED",
+      "Real door control is unavailable in demo mode.",
+    );
   }
-  async confirmPhysicalUnlock(): Promise<Awaited<ReturnType<AccessControlService["confirmPhysicalUnlock"]>>> {
-    throw new ServiceError("NOT_CONNECTED", "Physical controller observation is unavailable in demo mode.");
+  async confirmPhysicalUnlock(): Promise<
+    Awaited<ReturnType<AccessControlService["confirmPhysicalUnlock"]>>
+  > {
+    throw new ServiceError(
+      "NOT_CONNECTED",
+      "Physical controller observation is unavailable in demo mode.",
+    );
   }
-  async reconcileUnlock(): Promise<Awaited<ReturnType<AccessControlService["reconcileUnlock"]>>> { return this.confirmPhysicalUnlock(); }
-  async configureUnlockDuration(): Promise<Awaited<ReturnType<AccessControlService["configureUnlockDuration"]>>> { return this.remoteUnlock(); }
-  async controllerAccess(): Promise<import("./accessControlService").ControllerAccess> {
-    throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");
+  async reconcileUnlock(): Promise<
+    Awaited<ReturnType<AccessControlService["reconcileUnlock"]>>
+  > {
+    return this.confirmPhysicalUnlock();
   }
-  async authorizeControllerCards(): Promise<import("./accessControlService").ControllerAccess> { return this.controllerAccess(); }
-  async closeControllerAccess(): Promise<import("./accessControlService").ControllerAccess> { return this.controllerAccess(); }
-  async readControllerCard(): Promise<import("./accessControlService").ControllerCardRead> {
-    throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");
+  async configureUnlockDuration(): Promise<
+    Awaited<ReturnType<AccessControlService["configureUnlockDuration"]>>
+  > {
+    return this.remoteUnlock();
   }
-  async executeControllerOperation(): Promise<{ operationId: string; status: string; readbackVerified: boolean }> {
-    throw new ServiceError("NOT_CONNECTED", "Real controller access is unavailable in demo mode.");
+  async adoptControllerCardBaseline(): Promise<{ message: string }> {
+    throw new Error("Real device adoption unavailable in simulation.");
+  }
+  async previewControllerCard(): Promise<
+    import("./accessControlService").ManagementPreview
+  > {
+    throw new Error("Real device preview unavailable in simulation.");
+  }
+  async readControllerPlan(): Promise<
+    import("./accessControlService").ControllerPlanRead
+  > {
+    throw new Error("Real device read unavailable in simulation.");
+  }
+  async previewControllerPlan(): Promise<
+    import("./accessControlService").ManagementPreview
+  > {
+    throw new Error("Real device preview unavailable in simulation.");
+  }
+  async reconcileControllerPreview(): Promise<
+    import("./accessControlService").ManagementPreview
+  > {
+    throw new Error("Real device reconciliation unavailable in simulation.");
+  }
+  async applyControllerPreview(): Promise<
+    import("./accessControlService").ManagementPreview
+  > {
+    throw new Error("Real device writes unavailable in simulation.");
+  }
+  async attestControllerWeekdays(): Promise<{
+    indexToWeekday: number[];
+    verified: boolean;
+  }> {
+    throw new Error("Real device evidence unavailable in simulation.");
+  }
+  async controllerAccess(): Promise<
+    import("./accessControlService").ControllerAccess
+  > {
+    throw new ServiceError(
+      "NOT_CONNECTED",
+      "Real controller access is unavailable in demo mode.",
+    );
+  }
+  async closeControllerAccess(): Promise<
+    import("./accessControlService").ControllerAccess
+  > {
+    return this.controllerAccess();
+  }
+  async readControllerCard(): Promise<
+    import("./accessControlService").ControllerCardRead
+  > {
+    throw new ServiceError(
+      "NOT_CONNECTED",
+      "Real controller access is unavailable in demo mode.",
+    );
   }
   async recoveryOptions() {
     return {

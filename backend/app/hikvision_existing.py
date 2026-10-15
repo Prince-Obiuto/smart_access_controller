@@ -75,8 +75,8 @@ def validate_designation(db, cards, baseline, managed_cards=None):
         for person_id in bound["personIds"]:
             person = db.get(Person, person_id)
             account = db.scalar(select(Account).where(Account.person_id == person_id))
-            if not person or person.status != "ACTIVE" or person.purged or person.deleted_at or not account or account.role != "USER":
-                raise WriteBlocked("ACTIVE_TEST_USER_REQUIRED")
+            if not person or person.status != "ACTIVE" or person.purged or person.deleted_at or not account:
+                raise WriteBlocked("ACTIVE_ACCOUNT_REQUIRED")
             if (person.kind == "VISITOR") != (bound["kind"] == "VISITOR"):
                 raise WriteBlocked("TEST_IDENTITY_KIND_CONFLICT")
 

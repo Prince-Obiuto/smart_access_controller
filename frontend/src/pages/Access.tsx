@@ -600,7 +600,7 @@ function Issue({ app, onClose }: { app: Application; onClose: () => void }) {
           )}
           <button className="primary" type="submit" disabled={!number.trim()}>
             {data.controllerWritesAvailable === false
-              ? "Save issuance request (writes blocked)"
+              ? "Save issuance for controller review"
               : "Confirm enrolment & activate"}
           </button>
         </div>

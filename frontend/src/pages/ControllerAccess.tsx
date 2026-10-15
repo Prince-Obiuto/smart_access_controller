@@ -4,6 +4,7 @@ import { service } from "../services";
 import type {
   ControllerAccess as Access,
   ControllerCardRead,
+  ManagementPreview,
 } from "../services/accessControlService";
 import {
   Action,
@@ -15,18 +16,148 @@ import {
   text,
 } from "../components/ui";
 
+export function PreviewChange({
+  preview,
+  onResult,
+  onClose,
+}: {
+  preview: ManagementPreview;
+  onResult: (p: ManagementPreview) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [error, setError] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  return (
+    <Modal title="Review exact controller change" onClose={onClose}>
+      <p>
+        Operation <strong>{preview.id}</strong> ·{" "}
+        <Badge value={preview.status} />
+      </p>
+      <p role="status">{preview.message}</p>
+      {error && (
+        <p role="alert" className="form-error">
+          {error}
+        </p>
+      )}
+      <p>
+        {preview.kind} {preview.slot}. Preview expires{" "}
+        <Time value={preview.expiresAt} />.
+      </p>
+      <details>
+        <summary>Current controller state</summary>
+        <pre className="controller-json">
+          {JSON.stringify(preview.before, null, 2)}
+        </pre>
+      </details>
+      <details open>
+        <summary>Exact proposed state</summary>
+        <pre className="controller-json">
+          {JSON.stringify(preview.proposed, null, 2)}
+        </pre>
+      </details>
+      {preview.actual !== undefined && (
+        <details open>
+          <summary>Actual controller readback</summary>
+          <pre className="controller-json">
+            {JSON.stringify(preview.actual, null, 2)}
+          </pre>
+        </details>
+      )}
+      {preview.readbackOnly && (
+        <p>Verified by GET only; no card command was resent.</p>
+      )}
+      <p>
+        Affected cards:{" "}
+        {preview.affected
+          .map((c) => `${c.card} (door ${c.doors.join(", ") || "none"})`)
+          .join("; ") || "No currently authorized card references this slot."}
+      </p>
+      {preview.limitations.map((l) => (
+        <p className="muted" key={l}>
+          {l}
+        </p>
+      ))}
+      {preview.status === "PENDING" && (
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+            />{" "}
+            I authorize this exact change and the listed card impact.
+          </label>
+          <Action
+            className="primary"
+            disabled={!confirmed}
+            onClick={async () => {
+              try {
+                setError("");
+                await onResult(
+                  await service.applyControllerPreview(
+                    preview.id,
+                    preview.affected.map((c) => c.card),
+                  ),
+                );
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          >
+            Apply reviewed change once
+          </Action>
+        </>
+      )}
+      {preview.status === "REQUIRES_RECONCILIATION" &&
+        preview.kind === "CARD" && (
+          <Action
+            onClick={async () => {
+              try {
+                setError("");
+                await onResult(
+                  await service.reconcileControllerPreview(
+                    preview.id,
+                    preview.affected.map((c) => c.card),
+                  ),
+                );
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          >
+            Verify actual state without resending
+          </Action>
+        )}
+      {preview.validityCompatibilityUsed && (
+        <p className="callout">
+          Actual validity limit flags remain zero. Readback uses this device’s
+          pinned observation profile; backend-stopped expiry acceptance is still
+          pending.
+        </p>
+      )}
+      {preview.status !== "PENDING" && (
+        <p>
+          Refresh from controller before preparing another change. An uncertain
+          attempt is never automatically replayed.
+        </p>
+      )}
+    </Modal>
+  );
+}
+
 export function ControllerAccess() {
-  const { data, refresh, notify } = useApp();
+  const { data, refresh, act } = useApp();
   const [access, setAccess] = useState<Access | null>(null);
   const [error, setError] = useState("");
   const [record, setRecord] = useState<ControllerCardRead | null>(null);
+  const [adopted, setAdopted] = useState("");
   const [operation, setOperation] = useState<
     Access["operations"][number] | null
   >(null);
+  const [preview, setPreview] = useState<ManagementPreview | null>(null);
   const load = async () => {
     try {
       setAccess(await service.controllerAccess());
-      setError("");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -36,147 +167,75 @@ export function ControllerAccess() {
   }, []);
   const run = async (work: () => Promise<unknown>) => {
     try {
+      setError("");
       await work();
-      await load();
-      await refresh();
     } catch (e) {
       setError((e as Error).message);
       throw e;
     }
   };
-  const cards = data.cards.filter(
-    (c) =>
-      !c.revoked &&
-      !c.privileged &&
-      !["1051305927", "1052625607", "1050853895"].includes(c.number),
-  );
-  const people = data.people.filter(
-    (p) =>
-      p.status === "ACTIVE" &&
-      !p.deletedAt &&
-      p.controllerCardEligible !== false,
-  );
   return (
     <div className="access-grid">
       <Panel title="Controller card access">
         <div className="padded">
           <p>
-            Ordinary Door 1 access uses the existing Active hours configuration
-            and each approved assignment’s validity dates.
+            Save approved issuance, validity, replacement, revocation or visitor
+            changes normally. Review and apply one pending operation here.
+            Application roles do not grant physical access.
           </p>
           {error && (
             <p role="alert" className="form-error">
               {error}
             </p>
           )}
-          {access && (
-            <p>
-              <Badge
-                value={
-                  access.enabled
-                    ? access.expired
-                      ? "EXPIRED"
-                      : "AUTHORIZED"
-                    : "DISABLED"
-                }
-              />{" "}
-              {access.expiresAt && (
-                <>
-                  Authorization ends <Time value={access.expiresAt} />.
-                </>
+          <Action onClick={load}>Refresh controller operations</Action>
+          {access?.legacyScopeEnabled && (
+            <p className="callout">
+              A legacy operator scope is open. Close it before using normal web
+              management.
+              {data.identity.role === "SUPER_ADMIN" && (
+                <Action
+                  onClick={() =>
+                    run(async () => {
+                      await service.closeControllerAccess();
+                      await load();
+                    })
+                  }
+                >
+                  Close legacy authorization
+                </Action>
               )}
             </p>
           )}
-          <Action onClick={load}>Refresh controller operations</Action>
-          {data.identity.role === "SUPER_ADMIN" && !access?.enabled && (
-            <FormFields
-              fields={[
-                {
-                  name: "cardId",
-                  label: "Card",
-                  options: cards.map((c) => ({ value: c.id, label: c.number })),
-                },
-                {
-                  name: "personId",
-                  label: "Assigned person or approved visitor",
-                  options: people.map((p) => ({
-                    value: p.id,
-                    label: `${p.firstName} ${p.lastName} · ${p.reference}`,
-                  })),
-                },
-                {
-                  name: "nextPersonId",
-                  label: "Next approved visitor (optional)",
-                  required: false,
-                  options: [
-                    { value: "", label: "None" },
-                    ...people
-                      .filter((p) => p.type === "VISITOR")
-                      .map((p) => ({
-                        value: p.id,
-                        label: `${p.firstName} ${p.lastName}`,
-                      })),
-                  ],
-                },
-                {
-                  name: "replacementNumber",
-                  label: "Fresh replacement card number (optional)",
-                  required: false,
-                },
-                {
-                  name: "confirmed",
-                  label: "Authorize writes for these selected cards only",
-                  options: [
-                    { value: "NO", label: "Choose…" },
-                    { value: "YES", label: "Yes, authorize selected cards" },
-                  ],
-                },
-              ]}
-              submit="Authorize selected cards"
-              onSubmit={async (form) => {
-                if (text(form, "confirmed") !== "YES")
-                  throw new Error(
-                    "Confirm the selected cards before authorization.",
-                  );
-                const card = cards.find((c) => c.id === text(form, "cardId"))!;
-                const personIds = [
-                  text(form, "personId"),
-                  text(form, "nextPersonId"),
-                ].filter(Boolean);
-                const selected = [
-                  { number: card.number, kind: card.kind, personIds },
-                ];
-                const replacement = text(form, "replacementNumber").trim();
-                if (replacement) {
-                  if (
-                    card.kind !== "PERSONAL" ||
-                    replacement === card.number ||
-                    personIds.length !== 1
-                  )
-                    throw new Error(
-                      "Replacement requires two distinct personal cards and one person.",
-                    );
-                  selected.push({
-                    number: replacement,
-                    kind: "PERSONAL",
-                    personIds,
-                  });
-                }
-                await run(() => service.authorizeControllerCards(selected));
-              }}
-            />
-          )}
-          {access?.enabled && data.identity.role === "SUPER_ADMIN" && (
-            <Action onClick={() => run(() => service.closeControllerAccess())}>
-              Lock controller writes
-            </Action>
-          )}
-          <p className="muted">
-            Authorization sends no card write. Save issuance, revocation or
-            visitor assignment/return normally, then confirm its individual
-            controller operation below. Locking writes preserves current card
-            permissions.
-          </p>
+          {data.assignments
+            .filter(
+              (a) =>
+                ["PENDING", "ACTIVE"].includes(a.state) &&
+                a.sync === "OUT_OF_SYNC",
+            )
+            .map((a) => {
+              const card = data.cards.find((c) => c.id === a.cardId);
+              const person = data.people.find((p) => p.id === a.personId);
+              if (!card || card.revoked) return null;
+              return (
+                <div className="callout" key={a.id}>
+                  <p>
+                    {person?.firstName} {person?.lastName} · {card.number} ·
+                    updated local dates await a current operation.
+                  </p>
+                  <Action
+                    onClick={() =>
+                      run(async () => {
+                        await act({ type: "retry-sync", assignmentId: a.id });
+                        await load();
+                      })
+                    }
+                  >
+                    Prepare current assignment operation
+                  </Action>
+                </div>
+              );
+            })}
           {access?.operations.map((o) => (
             <div key={o.id} className="callout">
               <p>
@@ -184,37 +243,61 @@ export function ControllerAccess() {
                 <Badge value={o.status} />
               </p>
               <p>{o.message}</p>
-              <button
-                disabled={
-                  !access.enabled ||
-                  (access.expired && o.desired !== "DISABLED")
-                }
-                onClick={() => setOperation(o)}
+              <Action
+                onClick={() => {
+                  setOperation(o);
+                  setError("");
+                }}
               >
-                Review controller operation
-              </button>
+                Compare this operation
+              </Action>
+            </div>
+          ))}
+          {access && !access.operations.length && (
+            <p>No current card operations await execution.</p>
+          )}
+          {access?.management?.map((p) => (
+            <div key={p.id} className="callout">
+              <p>
+                {p.kind} {p.slot} · <Badge value={p.status} />
+              </p>
+              <p>{p.message}</p>
+              <Action onClick={() => setPreview(p)}>
+                Inspect operation {p.id.slice(0, 8)}
+              </Action>
             </div>
           ))}
         </div>
       </Panel>
-      <Panel title="Read controller card">
+      <Panel title="Read and reconcile controller card">
         <div className="padded">
-          {access?.cards.map((number) => (
-            <Action
-              key={number}
-              onClick={() =>
-                run(async () =>
-                  setRecord(await service.readControllerCard(number)),
-                )
-              }
-            >
-              Read {number}
-            </Action>
-          ))}
+          <p>
+            Read any complete card number, including an externally configured or
+            revoked card. Reading sends no permission change.
+          </p>
+          <FormFields
+            fields={[{ name: "number", label: "Card number" }]}
+            submit="Refresh card from controller"
+            onSubmit={(form) =>
+              run(async () =>
+                setRecord(
+                  await service.readControllerCard(text(form, "number").trim()),
+                ),
+              )
+            }
+          />
           {record && (
             <div className="callout">
               <p>
                 <strong>{record.card}</strong> · <Time value={record.readAt} />
+              </p>
+              <p>
+                Local assignment:{" "}
+                {record.local?.personId
+                  ? data.people.find((p) => p.id === record.local?.personId)
+                      ?.reference || record.local.personId
+                  : "Unassigned"}
+                . {record.local?.revoked ? "Permanently revoked." : ""}
               </p>
               {!record.record ? (
                 <p>No controller card record.</p>
@@ -231,53 +314,135 @@ export function ControllerAccess() {
                   </p>
                   <p>
                     Door rights:{" "}
-                    {Object.keys(record.record.doorRights).join(", ") || "None"}
+                    {record.record.doors
+                      .flatMap((v, i) => (v ? [i + 1] : []))
+                      .join(", ") || "None"}
                     .
                   </p>
                   <p>
                     Validity: {record.record.start.join(" / ")} to{" "}
-                    {record.record.expiry.join(" / ")} (controller local time).
+                    {record.record.expiry.join(" / ")} (Lagos).
                   </p>
+                  <p>
+                    Validity flags: enabled {record.record.validityEnabled},
+                    start {record.record.beginFlag}, end {record.record.endFlag}
+                    .
+                  </p>
+                  <details>
+                    <summary>Complete permission readback</summary>
+                    <pre className="controller-json">
+                      {JSON.stringify(record.record, null, 2)}
+                    </pre>
+                  </details>
                 </>
               )}
             </div>
           )}
-          <p>
-            Schedule editing and unrestricted-card setup remain unavailable
-            until their controller capabilities are verified.
+          {record &&
+            data.identity.role === "SUPER_ADMIN" &&
+            !record.local?.revoked && (
+              <FormFields
+                fields={[
+                  {
+                    name: "reason",
+                    label:
+                      "Reason to adopt this observed reconciliation baseline",
+                  },
+                ]}
+                submit="Adopt observed baseline only"
+                onSubmit={(f) =>
+                  run(async () =>
+                    setAdopted(
+                      (
+                        await service.adoptControllerCardBaseline(
+                          record.card,
+                          text(f, "reason"),
+                        )
+                      ).message,
+                    ),
+                  )
+                }
+              />
+            )}
+          {adopted && <p role="status">{adopted}</p>}
+          <p className="muted">
+            External permissions require an explicit reconciliation reason.
+            Payment and visitor approvals, permanent revocation and replacement
+            sequencing still apply.
           </p>
         </div>
       </Panel>
-      {operation && (
+      {operation && !preview && (
         <Modal
-          title="Confirm controller card operation"
+          title="Compare approved card operation"
           onClose={() => setOperation(null)}
         >
           <p>
-            Apply <strong>{operation.desired}</strong> to card{" "}
-            <strong>{operation.card}</strong>? The current application approval,
-            dates and replacement sequence will be checked again.
+            Card {operation.card} · {operation.desired}. No write occurs during
+            preview.
           </p>
-          <Action
-            className="primary"
-            onClick={() =>
-              run(async () => {
-                const result = await service.executeControllerOperation(
-                  operation.id,
-                );
-                notify(
-                  result.readbackVerified && result.status === "CONFIRMED"
-                    ? "Controller card state verified."
-                    : `${result.status}: ${result.message ?? "Controller confirmation pending"}`,
-                  result.status !== "CONFIRMED",
-                );
-                setOperation(null);
-              })
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
+          <FormFields
+            fields={[
+              {
+                name: "template",
+                label: "Existing template number",
+                type: "number",
+                value: "3",
+                min: "1",
+                max: "65535",
+              },
+              {
+                name: "reconcile",
+                label: "External controller permissions",
+                options: [
+                  { value: "NO", label: "Compare first" },
+                  {
+                    value: "YES",
+                    label: "Reconcile with approved local rights",
+                  },
+                ],
+              },
+              {
+                name: "reason",
+                label: "Reconciliation reason (required for external changes)",
+                required: false,
+              },
+            ]}
+            submit="Prepare fresh comparison"
+            onSubmit={(f) =>
+              run(async () =>
+                setPreview(
+                  await service.previewControllerCard(
+                    operation.id,
+                    Number(text(f, "template")),
+                    text(f, "reconcile") === "YES",
+                    text(f, "reason"),
+                  ),
+                ),
+              )
             }
-          >
-            Apply this card operation
-          </Action>
+          />
         </Modal>
+      )}
+      {preview && (
+        <PreviewChange
+          key={preview.id}
+          preview={preview}
+          onClose={() => {
+            setPreview(null);
+            setOperation(null);
+          }}
+          onResult={async (p) => {
+            setPreview(p);
+            await load();
+            await refresh();
+          }}
+        />
       )}
     </div>
   );

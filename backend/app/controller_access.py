@@ -129,10 +129,9 @@ def activate(db, settings, actor, cards):
                 or person.deleted_at
                 or person.purged
                 or not account
-                or account.role != "USER"
                 or (person.kind == "VISITOR") != (bound.get("kind") == "VISITOR")
             ):
-                raise WriteBlocked("ACTIVE_ORDINARY_IDENTITY_REQUIRED")
+                raise WriteBlocked("ACTIVE_ACCOUNT_REQUIRED")
         card = db.scalar(select(Card).where(Card.number == number))
         record = next((r for r in baseline["cards"] if r["card"] == number), None)
         assignment = (
@@ -181,7 +180,6 @@ def activate(db, settings, actor, cards):
             or assignment.sync not in {"SYNCHRONIZED", "PENDING"}
             or assignment.expiry <= now()
             or not account
-            or account.role != "USER"
             or person.status != "ACTIVE"
             or person.deleted_at
             or person.purged

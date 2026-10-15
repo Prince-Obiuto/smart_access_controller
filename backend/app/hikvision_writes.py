@@ -59,6 +59,8 @@ def physical_confirmation(db, assignment, confirmation):
     if not proven or op.desired == "DISABLED":
         return proven
     intent = op.data.get("intent", {})
+    if op.data.get("managementVerified"):
+        return bool(op.data.get("protectedReadbackVerified"))
     if intent.get("existingTemplate"):
         scope = get_setting(db, scope_key(op.controller_id))
         return bool(op.data.get("existingTemplateBaselineHash") == digest(scope.get("baseline", {}).get("resources", {}))

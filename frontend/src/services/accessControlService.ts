@@ -14,6 +14,7 @@ export type ErrorCode =
   | "FORBIDDEN"
   | "VALIDATION_ERROR"
   | "CONFLICT"
+  | "REQUIRES_RECONCILIATION"
   | "CONTROLLER_UNAVAILABLE"
   | "UNAUTHENTICATED"
   | "NOT_CONNECTED"
@@ -36,25 +37,137 @@ export interface ControllerAccess {
   expiresAt?: string;
   template: number;
   cards: string[];
-  operations: { id: string; card: string; desired: string; status: string; message: string }[];
+  management?: ManagementPreview[];
+  legacyScopeEnabled?: boolean;
+  operations: {
+    id: string;
+    card: string;
+    desired: string;
+    status: string;
+    message: string;
+  }[];
+}
+export type PlanKind = "WEEK" | "TEMPLATE" | "GROUP" | "HOLIDAY";
+export interface PlanRecord {
+  enabled: number;
+  name?: string;
+  days?: number[][][];
+  segments?: number[][];
+  start?: number[];
+  end?: number[];
+  week?: number;
+  groups?: number[];
+  plans?: number[];
+}
+export interface ControllerPlanRead {
+  kind: PlanKind;
+  slot: number;
+  record: PlanRecord;
+  revision: string;
+  readAt: string;
+  weekdayOrder?: number[];
+}
+export interface ManagementPreview {
+  id: string;
+  status: string;
+  message: string;
+  readbackVerified: boolean;
+  validityCompatibilityUsed?: boolean;
+  actual?: Record<string, unknown> | null;
+  readbackOnly?: boolean;
+  kind: string;
+  slot: string | number;
+  sourceOperationId?: string;
+  before: Record<string, unknown> | null;
+  proposed: Record<string, unknown> | null;
+  affected: { card: string; doors: number[] }[];
+  expiresAt?: string;
+  limitations: string[];
 }
 export interface ControllerCardRead {
   card: string;
   readAt: string;
-  record: null | { type: number; valid: number; doorRights: Record<string, number>; plansByDoor: Record<string, number[]>; start: number[]; expiry: number[] };
+  record: null | {
+    type: number;
+    valid: number;
+    doors: number[];
+    plans: number[][];
+    start: number[];
+    expiry: number[];
+    validityEnabled: number;
+    beginFlag: number;
+    endFlag: number;
+  };
+  local?: {
+    cardId: string;
+    revoked: boolean;
+    disabled: boolean;
+    assignmentId: string | null;
+    personId: string | null;
+    start: string | null;
+    expiry: string | null;
+  } | null;
 }
 export interface AccessControlService {
   readonly mode: "mock" | "http";
-  unlockStatus(operationId?: string): Promise<{ doorId: string; configuredSeconds: number | null; requiredSeconds: number; ready: boolean; sensor: string; controllerStatus: string; controllerError?: string; unresolvedOperations: UnlockOperation[]; operation?: UnlockOperation }>;
+  unlockStatus(operationId?: string): Promise<{
+    doorId: string;
+    configuredSeconds: number | null;
+    requiredSeconds: number;
+    ready: boolean;
+    sensor: string;
+    controllerStatus: string;
+    controllerError?: string;
+    unresolvedOperations: UnlockOperation[];
+    operation?: UnlockOperation;
+  }>;
   remoteUnlock(): Promise<UnlockOperation>;
   confirmPhysicalUnlock(operationId: string): Promise<UnlockOperation>;
-  reconcileUnlock(operationId: string, reason: string): Promise<UnlockOperation>;
-  configureUnlockDuration(): Promise<{ operationId: string; status: string; readbackVerified: boolean; physicalState: string; message: string }>;
+  reconcileUnlock(
+    operationId: string,
+    reason: string,
+  ): Promise<UnlockOperation>;
+  configureUnlockDuration(): Promise<{
+    operationId: string;
+    status: string;
+    readbackVerified: boolean;
+    physicalState: string;
+    message: string;
+  }>;
+  adoptControllerCardBaseline(
+    number: string,
+    reason: string,
+  ): Promise<{ message: string }>;
+  previewControllerCard(
+    sourceOperationId: string,
+    template: number,
+    reconcile: boolean,
+    reason: string,
+  ): Promise<ManagementPreview>;
+  readControllerPlan(kind: PlanKind, slot: number): Promise<ControllerPlanRead>;
+  previewControllerPlan(
+    kind: PlanKind,
+    slot: number,
+    revision: string,
+    desired: Record<string, unknown>,
+    rollbackOf?: string,
+  ): Promise<ManagementPreview>;
+  reconcileControllerPreview(
+    id: string,
+    affectedCards: string[],
+  ): Promise<ManagementPreview>;
+  applyControllerPreview(
+    id: string,
+    affectedCards: string[],
+  ): Promise<ManagementPreview>;
+  attestControllerWeekdays(
+    slot: number,
+    labelledDays: number[][][],
+    sourceReference: string,
+  ): Promise<{ indexToWeekday: number[]; verified: boolean }>;
   controllerAccess(): Promise<ControllerAccess>;
-  authorizeControllerCards(cards: { number: string; kind: "PERSONAL" | "VISITOR"; personIds: string[] }[]): Promise<ControllerAccess>;
   closeControllerAccess(): Promise<ControllerAccess>;
   readControllerCard(number: string): Promise<ControllerCardRead>;
-  executeControllerOperation(id: string): Promise<{ operationId: string; status: string; readbackVerified: boolean; message?: string }>;
   currentIdentity(): Promise<Identity | null>;
   login(email: string, password: string): Promise<Identity>;
   logout(): Promise<void>;

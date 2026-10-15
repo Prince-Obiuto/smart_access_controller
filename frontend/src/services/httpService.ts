@@ -83,17 +83,71 @@ export function createHttpService(baseUrl: string): AccessControlService {
   }
   return {
     mode: "http",
-    unlockStatus: (operationId) => request("/controller/unlock" + (operationId ? "?operationId=" + encodeURIComponent(operationId) : "")),
+    unlockStatus: (operationId) =>
+      request(
+        "/controller/unlock" +
+          (operationId
+            ? "?operationId=" + encodeURIComponent(operationId)
+            : ""),
+      ),
     remoteUnlock: () => write("/controller/unlock", { confirmed: true }),
     confirmPhysicalUnlock: (operationId) =>
-      write("/controller/unlock/confirm-physical", { operationId, confirmed: true }),
-    reconcileUnlock: (operationId, reason) => write("/controller/unlock/reconcile", { operationId, reason, confirmed: true }),
-    configureUnlockDuration: () => write("/controller/unlock-duration", { confirmed: true }),
+      write("/controller/unlock/confirm-physical", {
+        operationId,
+        confirmed: true,
+      }),
+    reconcileUnlock: (operationId, reason) =>
+      write("/controller/unlock/reconcile", {
+        operationId,
+        reason,
+        confirmed: true,
+      }),
+    configureUnlockDuration: () =>
+      write("/controller/unlock-duration", { confirmed: true }),
+    adoptControllerCardBaseline: (number, reason) =>
+      write("/controller/management/adopt-card-baseline", {
+        number,
+        reason,
+        confirmed: true,
+      }),
+    previewControllerCard: (sourceOperationId, template, reconcile, reason) =>
+      write("/controller/management/card-preview", {
+        sourceOperationId,
+        template,
+        reconcile,
+        reason,
+      }),
+    readControllerPlan: (kind, slot) =>
+      request(`/controller/plans/${kind}/${slot}`),
+    previewControllerPlan: (kind, slot, revision, desired, rollbackOf) =>
+      write("/controller/management/plan-preview", {
+        kind,
+        slot,
+        revision,
+        desired,
+        rollbackOf,
+      }),
+    reconcileControllerPreview: (id, affectedCards) =>
+      write(`/controller/management/${encodeURIComponent(id)}/reconcile`, {
+        confirmed: true,
+        affectedCards,
+      }),
+    applyControllerPreview: (id, affectedCards) =>
+      write(`/controller/management/${encodeURIComponent(id)}/execute`, {
+        confirmed: true,
+        affectedCards,
+      }),
+    attestControllerWeekdays: (slot, labelledDays, sourceReference) =>
+      write("/controller/weekday-evidence", {
+        slot,
+        labelledDays,
+        sourceReference,
+        retrievedFromController: true,
+      }),
     controllerAccess: () => request("/controller/access"),
-    authorizeControllerCards: (cards) => write("/controller/access/authorize", { cards, confirmed: true }),
     closeControllerAccess: () => write("/controller/access/close", {}),
-    readControllerCard: (number) => request("/controller/cards/" + encodeURIComponent(number)),
-    executeControllerOperation: (id) => write("/controller/operations/" + encodeURIComponent(id) + "/execute", { confirmed: true }),
+    readControllerCard: (number) =>
+      request("/controller/cards/" + encodeURIComponent(number)),
     recoveryOptions: () => request("/auth/recovery-options"),
     requestPasswordReset: (email) => write("/auth/forgot-password", { email }),
     resetPassword: (token, password, confirmation) =>

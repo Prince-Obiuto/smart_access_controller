@@ -78,14 +78,13 @@ def test_close_retains_only_verified_normal_paid_card(env, png):
             "doors": [1] + [0] * 255,
             "plans": [[3, 0, 0, 0]] + [[0] * 4 for _ in range(255)],
             "validityEnabled": 1,
-            "beginFlag": 0,
-            "endFlag": 0,
+            "beginFlag": 1,
+            "endFlag": 1,
             "timeType": 0,
             "start": intent["start"],
             "expiry": intent["expiry"],
         }
         value = bytearray(expected_validity(intent))
-        value[1:3] = bytes(2)
         raw = {
             "card": "00009999",
             "command": 2178,
@@ -101,6 +100,10 @@ def test_close_retains_only_verified_normal_paid_card(env, png):
             verify_retained_paid(db, "00009999", scope, record, raw)["assignmentId"]
             == assignment["id"]
         )
+        with pytest.raises(WriteBlocked):
+            verify_retained_paid(
+                db, "00009999", scope, {**record, "beginFlag": 0, "endFlag": 0}, raw
+            )
         with pytest.raises(WriteBlocked):
             verify_retained_paid(db, "00009999", scope, {**record, "type": 6}, raw)
         card = db.scalar(select(Card).where(Card.number == "00009999"))

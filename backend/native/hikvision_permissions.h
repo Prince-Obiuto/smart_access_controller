@@ -46,7 +46,19 @@ static std::string ex_time(const NET_DVR_TIME_EX &t) {
     return "[" + std::to_string(t.wYear) + "," + std::to_string(t.byMonth) + "," + std::to_string(t.byDay) +
         "," + std::to_string(t.byHour) + "," + std::to_string(t.byMinute) + "," + std::to_string(t.bySecond) + "]";
 }
-static std::string card_json(const NET_DVR_CARD_CFG_V50 &c) {
+template <typename T> static std::string native_hex(const T &value) {
+    const BYTE *p = reinterpret_cast<const BYTE *>(&value); const char *digits = "0123456789abcdef";
+    std::string out; out.reserve(sizeof(T)*2);
+    for (size_t i=0;i<sizeof(T);++i) {out+=digits[p[i]>>4];out+=digits[p[i]&15];} return out;
+}
+template <typename T> static bool native_unhex(const std::string &hex, T &value) {
+    if(hex.size()!=sizeof(T)*2) return false;
+    BYTE *p=reinterpret_cast<BYTE *>(&value);
+    auto digit=[](char c)->int {return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};
+    for(size_t i=0;i<sizeof(T);++i) {int a=digit(hex[2*i]),b=digit(hex[2*i+1]); if(a<0||b<0)return false; p[i]=(a<<4)|b;}
+    return value.dwSize==sizeof(T);
+}
+static std::string card_json(const NET_DVR_CARD_CFG_V50 &c, bool raw = false) {
     std::string doors = "[", plans = "[";
     for (unsigned i = 0; i < MAX_DOOR_NUM_256; ++i) {
         if (i) { doors += ','; plans += ','; }
@@ -57,7 +69,7 @@ static std::string card_json(const NET_DVR_CARD_CFG_V50 &c) {
         }
         plans += ']';
     }
-    return "{\"card\":" + quote(text(c.byCardNo, ACS_CARD_NO_LEN)) + ",\"valid\":" + std::to_string(c.byCardValid) +
+    return std::string("{") + (raw ? "\"nativeHex\":" + quote(native_hex(c)) + "," : "") + "\"card\":" + quote(text(c.byCardNo, ACS_CARD_NO_LEN)) + ",\"valid\":" + std::to_string(c.byCardValid) +
         ",\"type\":" + std::to_string(c.byCardType) + ",\"leader\":" + std::to_string(c.byLeaderCard) +
         ",\"doors\":" + doors + "],\"plans\":" + plans + "],\"validityEnabled\":" + std::to_string(c.struValid.byEnable) +
         ",\"beginFlag\":" + std::to_string(c.struValid.byBeginTimeFlag) + ",\"endFlag\":" + std::to_string(c.struValid.byEnableTimeFlag) +
@@ -74,15 +86,15 @@ static bool card_number(const std::string &s) {
 }
 static std::vector<std::string> allowed_cards;
 static std::vector<unsigned> allowed_plans;
-static void card_request(LONG user, unsigned request, const std::string &number,
-                         NET_DVR_CARD_CFG_V50 *write, unsigned timeout_ms) {
+static DWORD card_request(LONG user, unsigned request, const std::string &number,
+                         NET_DVR_CARD_CFG_V50 *write, unsigned timeout_ms, bool raw = false, bool quiet = false, std::vector<NET_DVR_CARD_CFG_V50> *collected = nullptr) {
     card_count = 0; card_gap = false; card_status = 0; card_error = 0;
     NET_DVR_CARD_CFG_COND cond{}; cond.dwSize = sizeof(cond);
     cond.dwCardNum = number == "ALL" ? 0xffffffff : 1; cond.byCheckCardNo = 1;
     LONG handle = NET_DVR_StartRemoteConfig(user, write ? NET_DVR_SET_CARD_CFG_V50 : NET_DVR_GET_CARD_CFG_V50,
         &cond, sizeof(cond), card_callback, nullptr);
     DWORD error = handle < 0 ? NET_DVR_GetLastError() : 0;
-    if (handle < 0) { permission_end(request, "SDK_ERROR", error); return; }
+    if (handle < 0) { if(!quiet)permission_end(request, "SDK_ERROR", error); return error; }
     if (number != "ALL") {
 #ifdef IFT_VALIDITY_EVIDENCE
         if (write) validity_evidence(*write, request, true, sizeof(*write));
@@ -109,7 +121,8 @@ static void card_request(LONG user, unsigned request, const std::string &number,
           card_count = 0; }
         for (size_t i = 0; i < count; ++i) {
             if (++total > 10000) { card_gap = true; break; }
-            emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + card_json(batch[i]) + "}");
+            if(collected)collected->push_back(batch[i]);
+            if(!quiet)emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + card_json(batch[i], raw) + "}");
 #ifdef IFT_VALIDITY_EVIDENCE
             validity_evidence(batch[i], request, false, lengths[i]);
 #endif
@@ -122,15 +135,17 @@ static void card_request(LONG user, unsigned request, const std::string &number,
     const size_t remaining = card_count;
     if (remaining + total > 10000) card_gap = true;
     for (size_t i = 0; i < remaining && total < 10000; ++i, ++total) {
-        emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + card_json(card_queue[i]) + "}");
+        if(collected)collected->push_back(card_queue[i]);
+        if(!quiet)emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + card_json(card_queue[i], raw) + "}");
 #ifdef IFT_VALIDITY_EVIDENCE
         validity_evidence(card_queue[i], request, false, card_lengths[i]);
 #endif
     }
     if (!stopped) { if (!error) error = NET_DVR_GetLastError(); stopping = 1; }
     if (!error) error = card_error;
-    permission_end(request, card_gap ? "CALLBACK_GAP" : error ? "SDK_ERROR" :
+    if(!quiet)permission_end(request, card_gap ? "CALLBACK_GAP" : error ? "SDK_ERROR" :
         card_status == NET_SDK_CALLBACK_STATUS_SUCCESS && stopped ? "OK" : "UNCERTAIN", error);
+    return error ? error : card_gap ? 0xfffffffe : card_status == NET_SDK_CALLBACK_STATUS_SUCCESS && stopped ? 0 : 0xffffffff;
 }
 static std::string daytime(const NET_DVR_SIMPLE_DAYTIME &t) {
     return std::to_string(t.byHour * 3600 + t.byMinute * 60 + t.bySecond);
@@ -214,14 +229,16 @@ static void schedule_request(LONG user, unsigned request, std::istringstream &in
     if (ok && !write) emit("{\"kind\":\"permissionRow\",\"request\":" + std::to_string(request) + ",\"data\":" + data + "}");
     permission_end(request, ok ? "OK" : "SDK_ERROR", error);
 }
+#include "hikvision_management.h"
 static void permission_command(LONG user, const std::string &name, std::istringstream &in, unsigned timeout_ms) {
     unsigned request = 0; in >> request;
-    if (name == "AUTHORIZE") {
+    if (name == "MANAGE") { management_command(user, request, in, timeout_ms);
+    } else if (name == "AUTHORIZE") {
         allowed_cards.clear(); allowed_plans.clear(); unsigned count = 0; in >> count;
         if (count > 32) { permission_end(request, "INVALID_INPUT"); return; }
         for (unsigned i = 0; i < count; ++i) { std::string card; in >> card; if (!card_number(card)) { permission_end(request, "INVALID_INPUT"); return; } allowed_cards.push_back(card); }
         in >> count; if (count > 64) { permission_end(request, "INVALID_INPUT"); return; }
-        for (unsigned i = 0; i < count; ++i) { unsigned n; in >> n; if (n < 1 || n > 255) { permission_end(request, "INVALID_INPUT"); return; } allowed_plans.push_back(n); }
+        for (unsigned i = 0; i < count; ++i) { unsigned n; in >> n; if (n < 1 || n > 65535) { permission_end(request, "INVALID_INPUT"); return; } allowed_plans.push_back(n); }
         if (!in) { allowed_cards.clear(); allowed_plans.clear(); permission_end(request, "INVALID_INPUT"); return; }
         permission_end(request, "OK");
     } else if (name == "CARD_READ") {

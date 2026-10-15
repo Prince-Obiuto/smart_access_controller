@@ -408,7 +408,7 @@ def snapshot(db, actor, settings, at=None):
                 **person_view(db, p),
                 "sync": person_sync(p),
                 "controllerCardEligible": p.status == "ACTIVE" and not p.purged and not p.deleted_at
-                and bool(db.scalar(select(Account.id).where(Account.person_id == p.id, Account.role == "USER"))),
+                and bool(db.scalar(select(Account.id).where(Account.person_id == p.id))),
                 "accountRecoveryAllowed": actor.role in {"ADMIN", "SUPER_ADMIN"}
                 and p.status == "ACTIVE"
                 and not p.purged
@@ -482,10 +482,9 @@ def snapshot(db, actor, settings, at=None):
         "controllerTestWritesEnabled": settings.controller_mode
         == "HIKVISION_CONTROLLED"
         and bool(write_scope.get("enabled")),
-        "controllerWriteMessage": "Scoped test writes enabled; existing backlog held for individual review."
+        "controllerWriteMessage": "Controller changes require individual preview, authorization and SDK readback in Administration. Unrelated backlog remains blocked."
         if settings.controller_mode == "HIKVISION_CONTROLLED"
-        and write_scope.get("enabled")
-        else "Physical writes blocked; no active test scope.",
+        else "Simulation mode: no physical controller writes.",
         "controllerReadStatus": read_status if read_only else "SIMULATED",
         "controllerReadMessage": read_code if read_only else "SIMULATED",
         "controllerReaderMappingVerified": bool(

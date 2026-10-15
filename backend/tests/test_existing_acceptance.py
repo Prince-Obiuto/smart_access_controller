@@ -124,17 +124,17 @@ def test_existing_scope_stamps_only_designated_card_operations(env):
         assert cardop.data["writeEpoch"]=="designated" and "writeEpoch" not in scheduleop.data
 
 
-def test_scope_rejects_existing_rights_and_admin_identity(env):
-    _,database,accounts,_=env
+def test_scope_rejects_unreviewed_existing_rights_but_allows_ordinary_super_admin(env):
+    _, database, accounts, _ = env
     with database.session() as db:
-        cards={"00009999":{"kind":"PERSONAL","personIds":[accounts["USER"][1]]}}
-        validate_designation(db,cards,{"cards":[]})
-        record,_,_,_=validity_example()
-        with pytest.raises(WriteBlocked,match="EXISTING_CONTROLLER_PERMISSION"):
-            validate_designation(db,cards,{"cards":[record]})
-        cards["00009999"]["personIds"]=[accounts["SUPER_ADMIN"][1]]
-        with pytest.raises(WriteBlocked,match="ACTIVE_TEST_USER_REQUIRED"):
-            validate_designation(db,cards,{"cards":[]})
+        cards = {"00009999": {"kind": "PERSONAL", "personIds": [accounts["USER"][1]]}}
+        validate_designation(db, cards, {"cards": []})
+        record, _, _, _ = validity_example()
+        with pytest.raises(WriteBlocked, match="EXISTING_CONTROLLER_PERMISSION"):
+            validate_designation(db, cards, {"cards": [record]})
+        cards["00009999"]["personIds"] = [accounts["SUPER_ADMIN"][1]]
+        validate_designation(db, cards, {"cards": []})
+        assert not db.scalar(select(Card).where(Card.privileged.is_(True)))
 
 
 def test_scope_rejects_local_revocation_and_wrong_card_kind(env):

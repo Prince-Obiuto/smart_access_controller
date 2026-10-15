@@ -4,6 +4,7 @@ import { service } from "../services";
 import { can, roles } from "../permissions";
 import { Heading } from "./Access";
 import { Records } from "./Records";
+import { ControllerSchedules } from "./ControllerSchedules";
 import { ControllerAccess } from "./ControllerAccess";
 import {
   Action,
@@ -18,7 +19,9 @@ import type { AccessEvent, Audit, Person, Schedule } from "../models";
 export function Administration() {
   const { data } = useApp();
   const tabs = [
-    ...(can(data.identity.role, "issue") && data.controllerMode !== "SIMULATED" ? ["Controller"] : []),
+    ...(can(data.identity.role, "issue") && data.controllerMode !== "SIMULATED"
+      ? ["Controller"]
+      : []),
     ...(can(data.identity.role, "schedules") ? ["Schedules"] : []),
     "Audit logs",
     ...(can(data.identity.role, "settings") ? ["Settings", "Recovery"] : []),
@@ -44,7 +47,10 @@ export function Administration() {
       {tab === "Controller" ? (
         <ControllerAccess />
       ) : tab === "Schedules" ? (
-        <Schedules />
+        <>
+          {data.controllerMode !== "SIMULATED" && <ControllerSchedules />}
+          <Schedules />
+        </>
       ) : tab === "Audit logs" ? (
         <Records family="audits" />
       ) : tab === "Settings" ? (
@@ -68,13 +74,14 @@ function Schedules() {
   return (
     <div className="access-grid">
       <Panel
-        title="Normal access schedule"
+        title="Local schedule draft"
         action={<Badge value={data.schedule.sync} />}
       >
         <div className="padded">
           <p>
-            Normal personal and visitor cards follow this schedule within their
-            individual validity dates. Operational timezone: Africa/Lagos.
+            Local schedule intent remains pending until applied and read back on
+            the controller. Use Live controller schedules above for explicit
+            device edits. Operational timezone: Africa/Lagos.
           </p>
           <fieldset>
             <legend>Working days</legend>
@@ -262,7 +269,8 @@ function Settings() {
         <Panel title="Visitor card pool">
           <div className="padded">
             <p>
-              Add a reusable visitor card. It becomes available only after controller disable confirmation.
+              Add a reusable visitor card. It becomes available only after
+              controller disable confirmation.
             </p>
             <FormFields
               fields={[{ name: "number", label: "Visitor pool card number" }]}
@@ -504,7 +512,11 @@ export function Notifications() {
                 <h2>{n.title}</h2>
                 <p>{n.detail}</p>
                 <small>
-                  <Time value={n.at} />{data.controllerMode === "SIMULATED" || service.mode === "mock" ? " · Simulated" : ""}
+                  <Time value={n.at} />
+                  {data.controllerMode === "SIMULATED" ||
+                  service.mode === "mock"
+                    ? " · Simulated"
+                    : ""}
                 </small>
               </div>
               {n.read ? (

@@ -318,3 +318,35 @@ CommandTypes = [
     command("pool-card", number=(Annotated[str, Field(pattern=r"^\d{4,32}$")], ...)),
 ]
 CommandUnion = Annotated[Union[tuple(CommandTypes)], Field(discriminator="type")]
+
+
+class ManagementCardPreview(StrictModel):
+    sourceOperationId: str = Field(min_length=1, max_length=64)
+    template: int = Field(ge=1, le=65535)
+    reconcile: bool = False
+    reason: str = Field(default="", max_length=500)
+
+
+class ManagementPlanPreview(StrictModel):
+    kind: Literal["WEEK", "TEMPLATE", "GROUP", "HOLIDAY"]
+    slot: int = Field(ge=1, le=65535)
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    desired: dict
+    rollbackOf: str | None = Field(default=None, max_length=64)
+
+
+class ManagementExecution(ControllerExecution):
+    affectedCards: list[str] = Field(max_length=10000)
+
+
+class WeekdayEvidence(StrictModel):
+    slot: int = Field(ge=1, le=65535)
+    sourceReference: str = Field(min_length=10, max_length=500)
+    retrievedFromController: bool
+    labelledDays: list[list[list[int]]] = Field(min_length=7, max_length=7)
+
+
+class AdoptControllerCard(StrictModel):
+    number: str = Field(pattern=r"^[0-9]{4,20}$")
+    reason: str = Field(min_length=10, max_length=500)
+    confirmed: bool

@@ -106,7 +106,7 @@ export function Badge({ value }: { value: string }) {
   const bad = /FAILED|REVOKED|CRITICAL|DENIED|MISSING|DAMAGED|REJECTED/.test(
       value,
     ),
-    warn = /PENDING|UNKNOWN|WARNING|OUT_OF_SYNC|QUARANTINED|UNCERTAIN/.test(
+    warn = /PENDING|UNKNOWN|WARNING|OUT_OF_SYNC|QUARANTINED|UNCERTAIN|REQUIRES_RECONCILIATION/.test(
       value,
     );
   return (

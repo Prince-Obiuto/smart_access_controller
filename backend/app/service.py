@@ -65,6 +65,12 @@ class AccessService:
             ) from exc
         if expiry <= start:
             raise DomainError("VALIDATION_ERROR", "Access expiry must follow start.")
+        if self.settings.controller_mode == "HIKVISION_CONTROLLED":
+            from .hikvision import LAGOS
+            device_start = start.astimezone(LAGOS)
+            device_end = (expiry - timedelta(seconds=1)).astimezone(LAGOS)
+            if not 1970 <= device_start.year <= device_end.year <= 2037:
+                raise DomainError("VALIDATION_ERROR", "Controller card validity must fall within 1970–2037 (inclusive).")
         return start, expiry
 
     def history(self, application, action, reason=None):

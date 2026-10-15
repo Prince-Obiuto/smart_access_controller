@@ -177,9 +177,11 @@ def test_activation_does_not_drain_backlog_and_readback_confirms(env, png, monke
 
 
 def test_new_assignment_in_existing_template_scope_is_released_to_writer(
-    env, png
+    env, png, monkeypatch
 ):
-    settings, database, admin, application_id = approved(env, png)
+    monkeypatch.setattr("app.main.process_operations", lambda *a, **k: None)
+    _, _, admin, application_id = approved(env, png)
+    settings, database, _, _ = env
     settings.controller_mode = "HIKVISION_CONTROLLED"
     with database.session() as db:
         set_setting(
@@ -190,7 +192,9 @@ def test_new_assignment_in_existing_template_scope_is_released_to_writer(
                 "epoch": "existing-template-epoch",
                 "kind": "EXISTING_TEMPLATE",
                 "existingTemplate": 3,
-                "cards": {},
+                "cards": {
+                    "00000043": {"kind": "PERSONAL", "personIds": [env[2]["USER"][1]]}
+                },
             },
         )
         db.commit()
@@ -273,7 +277,7 @@ def test_readonly_blocks_permission_protocol_even_with_scoped_settings(tmp_path)
     from app.hikvision import NativeSession
 
     session = NativeSession(
-        ControllerSettings(_env_file=None, controller_mode="HIKVISION_CONTROLLED"),
+        ControllerSettings(_env_file=None, controller_mode="SIMULATED"),
         permissions=True,
     )
     for command in ["AUTHORIZE", "CARD_WRITE", "PLAN_WRITE"]:

@@ -4,7 +4,7 @@ import hashlib
 import json
 import pytest
 from sqlalchemy import select
-from app import controller_access, hikvision_existing
+from app import controller_access, controller_management, hikvision_existing
 from app.common import get_setting, now
 from app.hikvision_binary import prebuilt
 from app.hikvision_writes import WriteBlocked
@@ -180,9 +180,13 @@ def test_application_executes_only_selected_current_card_with_readback(
         == "CONFIRMED"
     )
     assert writes == [("00009999", 3)]
-    assert admin.get("/api/controller/cards/00009999").json()["record"][
-        "doorRights"
-    ] == {"1": 1}
+    class ReadTransport:
+        def __init__(self, *args): pass
+        def start(self): pass
+        def card(self, number): return records.get(number)
+        def close(self): pass
+    monkeypatch.setattr(controller_management, "Transport", ReadTransport)
+    assert admin.get("/api/controller/cards/00009999").json()["record"]["doors"] == [1] + [0] * 255
     with env[1].session() as db:
         assert db.get(Assignment, assignment_id).sync == "SYNCHRONIZED"
         assert db.get(Operation, unrelated_id).status == "PENDING"

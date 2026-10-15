@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import FileResponse, JSONResponse
 
-from . import password_recovery as recovery_password, controller_access
+from . import password_recovery as recovery_password, controller_access, controller_management
 from .common import audit, get_setting, identity, initialize, iso, now
 from .config import Settings
 from .db import Database, domain_lock
@@ -49,6 +49,7 @@ from .schemas import (
     AdminRecovery,
     CommandUnion,
     ControllerAuthorization,
+    ManagementCardPreview, ManagementPlanPreview, ManagementExecution, WeekdayEvidence, AdoptControllerCard,
     ControllerExecution,
     UnlockObservation,
     UnlockReconciliation,
@@ -158,7 +159,10 @@ def create_app(settings=None, database=None):
 
     @app.exception_handler(WriteBlocked)
     async def controller_blocked(request, exc):
-        return JSONResponse({"code": "CONTROLLER_UNAVAILABLE", "message": str(exc)}, 409)
+        code = str(exc)
+        management_path = request.url.path.startswith(("/api/controller/management", "/api/controller/plans", "/api/controller/weekday-evidence", "/api/controller/cards"))
+        return JSONResponse({"code": "CONTROLLER_UNAVAILABLE", "diagnostic": code,
+                             "message": controller_management.error_message(code) if management_path else code}, 409)
 
     @app.exception_handler(IntegrityError)
     async def conflict(request, exc):
@@ -461,7 +465,7 @@ def create_app(settings=None, database=None):
     def controller_access_status(request: Request, db: DB):
         actor = actor_for(db, request)
         controller_access.authorize(db, actor, settings)
-        return controller_access.status(db, settings)
+        return controller_management.status(db, settings)
 
     @app.get("/api/controller/unlock")
     def controller_unlock_status(request: Request, db: DB, operationId: str | None = None):
@@ -522,8 +526,7 @@ def create_app(settings=None, database=None):
 
     @app.get("/api/controller/cards/{number}")
     def read_controller_card(number: str, request: Request, db: DB):
-        controller_access.authorize(db, actor_for(db, request), settings)
-        return controller_access.read_card(db, settings, number)
+        return controller_management.read_card(db, settings, actor_for(db, request), number)
 
     @app.post("/api/controller/operations/{id}/execute")
     def execute_controller_operation(id: str, body: ControllerExecution, request: Request, db: DB):
@@ -531,6 +534,81 @@ def create_app(settings=None, database=None):
         if not body.confirmed:
             raise DomainError("VALIDATION_ERROR", "Confirm this card operation.")
         return controller_access.execute(db, settings, actor, id)
+
+    @app.post("/api/controller/management/adopt-card-baseline")
+    def adopt_controller_card(body: AdoptControllerCard, request: Request, db: DB):
+        if not body.confirmed:
+            raise DomainError(
+                "VALIDATION_ERROR",
+                "Confirm adoption of the observed reconciliation baseline.",
+            )
+        return controller_management.adopt_card(
+            db, settings, actor_for(db, request, True), body.number, body.reason
+        )
+
+    @app.get("/api/controller/plans/{kind}/{slot}")
+    def read_management_plan(kind: str, slot: int, request: Request, db: DB):
+        return controller_management.read_plan(
+            db, settings, actor_for(db, request), kind, slot
+        )
+
+    @app.post("/api/controller/management/card-preview")
+    def management_card_preview(body: ManagementCardPreview, request: Request, db: DB):
+        return controller_management.preview_card(
+            db,
+            settings,
+            actor_for(db, request, True),
+            body.sourceOperationId,
+            body.template,
+            body.reconcile,
+            body.reason,
+            request.headers.get("idempotency-key"),
+        )
+
+    @app.post("/api/controller/management/plan-preview")
+    def management_plan_preview(body: ManagementPlanPreview, request: Request, db: DB):
+        return controller_management.preview_plan(
+            db,
+            settings,
+            actor_for(db, request, True),
+            body.kind,
+            body.slot,
+            body.revision,
+            body.desired,
+            request.headers.get("idempotency-key"),
+            body.rollbackOf,
+        )
+
+    @app.post("/api/controller/management/{id}/execute")
+    def execute_management(
+        id: str, body: ManagementExecution, request: Request, db: DB
+    ):
+        if not body.confirmed:
+            raise DomainError(
+                "VALIDATION_ERROR",
+                "Confirm this exact controller change and its affected cards.",
+            )
+        return controller_management.execute(
+            db, settings, actor_for(db, request, True), id, body.affectedCards
+        )
+
+    @app.post("/api/controller/management/{id}/reconcile")
+    def reconcile_management(id: str, body: ManagementExecution, request: Request, db: DB):
+        if not body.confirmed:
+            raise DomainError("VALIDATION_ERROR", "Confirm read-only reconciliation of this operation.")
+        return controller_management.execute(db, settings, actor_for(db, request, True), id, body.affectedCards, reconcile_only=True)
+
+    @app.post("/api/controller/weekday-evidence")
+    def weekday_evidence(body: WeekdayEvidence, request: Request, db: DB):
+        return controller_management.attest_weekdays(
+            db,
+            settings,
+            actor_for(db, request, True),
+            body.slot,
+            body.labelledDays,
+            body.sourceReference,
+            body.retrievedFromController,
+        )
 
     @app.post("/api/commands")
     def commands(body: CommandUnion, request: Request, db: DB):
