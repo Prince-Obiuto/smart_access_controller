@@ -13,5 +13,6 @@ backend/var/
 .env.*.local
 *.pyc
 coverage/
+.worktrees/
 # Local vendor SDK: retain upstream notices; never commit/redistribute binaries.
 EN-HCNetSDK*/
